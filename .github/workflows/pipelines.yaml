@@ -1,0 +1,101 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Backend Lint & Test Stage
+  # ---------------------------------------------------------------------------
+  backend-ci:
+    name: Backend CI (Python)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest pytest-cov ruff
+
+      - name: Code Linting & Formatting Check
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Run Pytest Suite with Coverage
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          MEMORY_DATABASE: ":memory:"
+        run: |
+          pytest -v --cov=backend --cov-report=term-missing
+
+  # ---------------------------------------------------------------------------
+  # 2. Frontend Lint & Build Stage
+  # ---------------------------------------------------------------------------
+  frontend-ci:
+    name: Frontend CI (Next.js/React)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Lint Frontend Code
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: Build Frontend Application
+        run: |
+          cd frontend
+          npm run build
+
+  # ---------------------------------------------------------------------------
+  # 3. Security Analysis (Dependency Audit)
+  # ---------------------------------------------------------------------------
+  security-audit:
+    name: Security & Vulnerability Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Pip Audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --ignore-vuln GHSA-xxxx-xxxx-xxxx || true
