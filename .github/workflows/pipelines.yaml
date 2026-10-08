@@ -10,6 +10,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Steps run as root inside containerized test runners (act); pip prints a
+  # root-user warning there. GitHub-hosted runners use a non-root user, so
+  # this only keeps local dry-run logs clean.
+  PIP_ROOT_USER_ACTION: ignore
+
 jobs:
   # ---------------------------------------------------------------------------
   # 1. Backend Lint & Test Stage
@@ -63,9 +69,20 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: ${{ hashFiles('frontend/package-lock.json') != '' && 'npm' || '' }}
           cache-dependency-path: ${{ hashFiles('frontend/package-lock.json') != '' && 'frontend/package-lock.json' || '' }}
+
+      # Next.js build cache — silences "No build cache found" and speeds up
+      # rebuilds. Must run before npm ci so hashes only cover source files.
+      - name: Cache Next.js build
+        if: hashFiles('frontend/package-lock.json') != ''
+        uses: actions/cache@v6
+        with:
+          path: frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/app/**', 'frontend/src/**', 'frontend/pages/**', 'frontend/*.ts', 'frontend/*.tsx', 'frontend/*.js', 'frontend/*.jsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-
 
       - name: Install Frontend Dependencies
         if: hashFiles('frontend/package-lock.json') != ''
