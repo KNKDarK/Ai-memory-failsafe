@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.coverage
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+
+# Env
+.env
+.env.local

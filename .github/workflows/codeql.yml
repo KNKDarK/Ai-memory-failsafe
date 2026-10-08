@@ -28,16 +28,36 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      # CodeQL's database finalize fails hard when a language has no source
+      # files ("no source code seen during build"), so detect analyzable code
+      # per language and skip analysis when none exists yet.
+      - name: Detect analyzable source
+        id: detect
+        run: |
+          case "${{ matrix.language }}" in
+            python)
+              echo "has_source=${{ hashFiles('**/*.py') != '' }}" >> "$GITHUB_OUTPUT"
+              ;;
+            javascript-typescript)
+              echo "has_source=${{ hashFiles('**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.ts', '**/*.tsx') != '' }}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "has_source=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        if: steps.detect.outputs.has_source == 'true'
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended,security-and-quality
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        if: steps.detect.outputs.has_source == 'true'
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
