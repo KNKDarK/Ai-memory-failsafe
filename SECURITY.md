@@ -6,7 +6,7 @@ Only the latest version of the **AI Agent Failure Memory** codebase is actively 
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
+| 1.0  | :white_check_mark: |
 | < 1.0   | :x:                |
 
 ---
@@ -27,7 +27,7 @@ Because this system processes logs, agent actions, trace data, and vector embedd
 If you discover a security vulnerability or sensitive credential exposure within this repository, please report it responsibly:
 
 1. **Do not** create a public GitHub issue.
-2. Email your security findings to **`security@yourprojectdomain.com`** (or contact the primary maintainer directly).
+2. Email your security findings to **`knkssmk@gmail.com`** (or contact the primary maintainer directly).
 3. Include detailed steps to reproduce the vulnerability, including any relevant code snippets or payloads.
 
 ### What to Expect
