@@ -1180,10 +1180,10 @@ See [`LICENSE`](LICENSE) for details.
 
 **Team Members:**
 
-* Your Name — AI / Backend
-* Team Member — Frontend
-* Team Member — Research / Evaluation
-* Team Member — Product / Design
+* Aum namaha  — AI / Backend
+* sri harsha — Frontend
+* shafi masthan koushik — Research / Evaluation
+* vamsi sai krishna— Product / Design
 
 ---
 
