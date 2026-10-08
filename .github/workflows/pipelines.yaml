@@ -16,7 +16,7 @@ jobs:
   # ---------------------------------------------------------------------------
   backend-ci:
     name: Backend CI (Python)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout Repository
@@ -54,7 +54,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-ci:
     name: Frontend CI (Next.js/React)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout Repository
@@ -71,7 +71,18 @@ jobs:
         if: hashFiles('frontend/package-lock.json') != ''
         run: |
           cd frontend
-          npm ci
+          npm ci --no-audit
+
+      # Gated on CRITICAL only: high-severity `braces` (GHSA-vfj7-8cjw-p6xm)
+      # has no fixed release upstream yet (eslint-config-next -> fast-glob ->
+      # micromatch -> braces). Fail the build if anything critical appears.
+      - name: Audit Frontend Dependencies
+        if: hashFiles('frontend/package-lock.json') != ''
+        run: |
+          cd frontend
+          result=$(npm audit --audit-level=critical --json | jq -c '.metadata.vulnerabilities')
+          echo "npm audit summary: $result"
+          echo "$result" | jq -e '.critical == 0' > /dev/null
 
       - name: Lint Frontend Code
         if: hashFiles('frontend/package.json') != ''
@@ -90,7 +101,7 @@ jobs:
   # ---------------------------------------------------------------------------
   security-audit:
     name: Security & Vulnerability Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout Repository

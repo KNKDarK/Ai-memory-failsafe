@@ -1,0 +1,5 @@
+self-hosted-runner:
+  labels:
+    # GitHub-hosted label added in Sep 2026 (Ubuntu 26.04 GA); actionlint's
+    # bundled label list has not caught up yet.
+    - ubuntu-26.04
