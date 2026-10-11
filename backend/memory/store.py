@@ -165,7 +165,7 @@ class MemoryStore:
     def _safe_json_list(raw: object) -> list[str]:
         if raw is None:
             return []
-        if isinstance(raw, (list, tuple)):
+        if isinstance(raw, list | tuple):
             return [str(x) for x in raw]
         try:
             parsed = json.loads(str(raw))

@@ -191,7 +191,7 @@ def _missing_path(trace: StepTrace) -> str | None:
 def _string_list(value: object) -> list[str]:
     if value is None:
         return []
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, list | tuple | set):
         return [str(item) for item in value]
     return [str(value)]
 

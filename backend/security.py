@@ -71,7 +71,7 @@ def _walk(value, redact):
         return redact(value)
     if isinstance(value, dict):
         return {k: _walk(v, redact) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_walk(v, redact) for v in value]
     return value
 
