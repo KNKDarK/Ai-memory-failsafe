@@ -215,25 +215,36 @@ Most likely cause
 
 ---
 
-## 📚 Semantic Memory Retrieval
+## 📚 Memory Retrieval
 
-When a new task arrives, the system searches for previous failures that are semantically similar.
+When a new task arrives, the system searches previous failures for relevant ones.
 
 ```text
 Current Task
      ↓
-Embedding
+Vectorise (lexical by default)
      ↓
 Memory Search
      ↓
-Relevant Failures
+Rank Memories (similarity + confidence + recency + feedback)
      ↓
-Rank Memories
+Gate (score AND similarity floors)
      ↓
-Inject Lessons
+Apply as concrete plan steps
 ```
 
-This allows the agent to benefit from previous experiences even when the new task is worded differently.
+The default embedder is a deterministic **feature-hashing** vector similarity
+computed entirely offline. It is a *lexical* signal, reported as
+`hashing_embedding` everywhere — it is **not** a trained semantic model. A pure
+lexical `tfidf` fallback and an optional neural embedder exist behind the same
+interface and are only used when explicitly configured. See
+[`docs/architecture.md`](docs/architecture.md#similarity-modes) for details.
+
+`RETRIEVAL_METHOD` can also select the similarity function explicitly — `tfidf`,
+`bm25` (hand-rolled Okapi BM25), `embedding`, or `hybrid` — and the benchmark
+compares all four head-to-head on the same labelled probes. The default, `auto`,
+preserves the historical routing, and a lexical method is always reported as
+lexical, never as semantic.
 
 ---
 
@@ -263,25 +274,23 @@ Apply retry backoff before executing.
 
 ## 📈 Learning Metrics
 
-The system tracks whether failure memories actually improve future performance.
+The system tracks whether failure memories actually improve future performance
+by running the same tasks in three arms under identical conditions: a
+**baseline** (no retrieval, no learning), a **naive** arm (retrieve and apply
+everything, no validation — a control for the guard rails), and the
+**validated memory** arm (retrieve, gate, apply, learn, feedback).
 
-Example:
+Reproduce it with:
 
-```text
-Total Tasks              100
-Failures                  31
-Lessons Learned           24
-Repeated Failures           7
-Prevented Failures         17
-
-Failure Rate
-Before Memory             31%
-After Memory              14%
-
-Improvement               54.8%
+```bash
+python -m backend.evaluation.benchmark      # or: failure-memory-benchmark
 ```
 
-> Metrics shown above are illustrative. Actual benchmark results should be generated from the project's evaluation runs.
+The benchmark writes a machine-readable JSON report and a human-readable report,
+and the dashboard reads the real report from the backend — no metrics are
+hardcoded in the UI. The current measured results (success-rate improvement,
+prevented vs repeated failures, harmful applications, and selection/application
+retrieval relevance) are in [`docs/evaluation.md`](docs/evaluation.md).
 
 ---
 
@@ -384,6 +393,27 @@ This helps distinguish useful lessons from unreliable ones.
 
 ---
 
+## 🗺️ Where each module lives
+
+The diagram above is the concept; the shipped code is described in
+[`docs/architecture.md`](docs/architecture.md). That document also contains a
+**reference design mapping** that lines this project up against the simpler
+four-module prototype sketch and explains exactly which real module covers each
+piece:
+
+| Concept in the diagram | Module |
+| --- | --- |
+| Task understanding / planning | `backend/agent/planner.py` |
+| Failure Memory Retriever | `backend/memory/retriever.py` + `ranking.py` + `embedding.py` |
+| Context builder / decision | `backend/agent/agent.py` (`planner.apply_preventions`) |
+| Tool / task execution | `backend/agent/executor.py` + `tools.py` |
+| Failure Analyzer | `backend/analysis/failure_analyzer.py` |
+| Lesson extractor | `backend/analysis/lesson_extractor.py` |
+| Memory Store | `backend/memory/store.py` (SQLite) |
+| Evaluation & Metrics | `backend/evaluation/benchmark.py` + `metrics.py` |
+
+---
+
 # 🔬 Failure Memory Model
 
 A failure is represented as structured experience.
@@ -392,21 +422,38 @@ Example:
 
 ```json
 {
-  "task": "deploy_python_application",
-  "action": "start_container",
-  "failure": "application_crashed",
-  "root_cause": "missing_database_url",
+  "id": "1f0c…",
+  "task": "deploy python application",
+  "task_type": "deploy",
+  "action": "deploy",
+  "failure": "deployment did not change target state",
+  "failure_category": "missing_configuration",
+  "root_cause": "required configuration 'DATABASE_URL' is missing",
+  "cause_status": "confirmed",
   "evidence": [
-    "DATABASE_URL was not present",
-    "application startup failed",
-    "container exited with code 1"
+    "environment is missing required key 'DATABASE_URL'",
+    "deploy reported failure for target 'app'"
   ],
   "lesson": "Validate required environment variables before deployment",
-  "prevention": "Run configuration validation before starting the container",
+  "prevention": "Validate configuration before starting the deployment",
+  "prevention_actions": [
+    "validate_config:DATABASE_URL",
+    "verify_outcome:deployment"
+  ],
+  "tags": ["missing_configuration", "deploy"],
   "confidence": 0.91,
-  "successful_prevention_count": 3
+  "status": "active",
+  "occurrence_count": 3,
+  "use_count": 3,
+  "success_count": 2,
+  "failure_count": 1
 }
 ```
+
+Confidence is only a stored prior. `effective_confidence` (derived from the
+success/failure counts and lifecycle status) is what actually gates retrieval and
+application, and `prevention_actions` are the machine-actionable steps the
+planner can insert into a plan.
 
 This makes failure memories:
 
@@ -520,89 +567,81 @@ Success
 
 # 📊 Evaluation
 
-The project should be evaluated using controlled repeated tasks.
+Improvement is measured, not claimed. The benchmark runs every scenario in three
+arms under identical task, environment, and attempt budgets:
 
-### Baseline
+- **Baseline** — the agent runs with no retrieval and no learning.
+- **Naive memory** — retrieve and apply *every* candidate with no validation
+  (a research arm that isolates what the guard rails contribute).
+- **Validated memory** — the same tasks, with retrieval, gating, learning, and
+  feedback.
 
-Run the agent without failure memory.
+It records per-arm success rate, repeated failures, prevented failures, and
+harmful memory applications, plus retrieval relevance (precision/recall for
+**selection** and **application**, reported separately). Two extra studies come
+from the same run: a **retrieval-method comparison** (`tfidf`, `bm25`,
+`embedding`, `hybrid`) and a **memory-lifecycle** fresh/stale/obsolete/expired
+breakdown (at run time and projected to the retire horizon).
 
-Record:
-
-```text
-Success rate
-Failure rate
-Repeated failure rate
-Average attempts
+```bash
+python -m backend.evaluation.benchmark       # writes JSON + Markdown reports
 ```
 
-### Memory-enabled agent
+- Machine-readable report: `data/evaluation_report.json`
+- Human-readable report: [`docs/evaluation.md`](docs/evaluation.md)
 
-Run the same or equivalent tasks with failure memory enabled.
+Every scenario is explicitly labelled as simulated, and the report contains only
+values measured by the run — the dashboard renders that report rather than
+hardcoded numbers.
 
-Record:
-
-```text
-Success rate
-Failure rate
-Repeated failure rate
-Average attempts
-Prevented failures
-```
-
-### Comparison
-
-```text
-                    Baseline     Memory
-------------------------------------------
-Success Rate           XX%          XX%
-Failure Rate          XX%          XX%
-Repeated Failures     XX%          XX%
-Avg Attempts          X.X          X.X
-Prevented Failures     --           XX
-```
-
-The goal is to demonstrate **measurable improvement**, not simply claim that the agent learns.
+Larger public datasets (ToolBench, SWE-bench Lite, ALFWorld / WebArena) are
+documented as an **external-validation roadmap** in
+[`docs/architecture.md`](docs/architecture.md#external-dataset-validation-roadmap),
+mapped to our failure categories. They are not wired into the default benchmark
+because they need network, models, or heavy CPU that the reproducible offline
+demo deliberately avoids; the adapter would emit the same `Scenario` shape and
+leave every metric unchanged.
 
 ---
 
 # 🛠️ Technology Stack
 
-> The exact stack can be adjusted during implementation. Keep this section synchronized with the final codebase.
+> The stack is deliberately offline-first: no API key, GPU, or network access is
+> required to run the agent, the tests, or the benchmark.
 
 ### Backend
 
-* Python
-* FastAPI
-* Pydantic
-* Uvicorn
+* Python 3.11+
+* FastAPI + Uvicorn
+* Pydantic v2
+* stdlib `sqlite3` (no external database server)
 
 ### AI / Agent Layer
 
-* LLM provider
-* Agent orchestration
-* Structured tool execution
-* Failure analysis
-* Lesson extraction
+* Deterministic rule-based planner and executor (offline, no GPU)
+* Optional, replaceable LLM provider (`deterministic` default, OpenAI-compatible optional)
+* Structured tool execution against an in-memory sandbox
+* Evidence-based failure analysis and lesson extraction
 
 ### Memory
 
-* Embeddings
-* Vector database
-* Semantic retrieval
-* Structured failure records
+* Structured failure records persisted in SQLite (dedup + merge)
+* Two-stage retrieval: vector scoring (`hashing` / `tfidf` / optional neural) then gating
+* Explainable ranking (similarity + confidence + recency + feedback)
+* Feedback, lifecycle status, contradiction detection, repeated-failure tracking
 
 ### Frontend
 
-* React / Next.js
-* TypeScript
-* Tailwind CSS
+* Next.js 16 (App Router)
+* React + TypeScript
+* Hand-written dark CSS (no Tailwind)
 
 ### Testing
 
-* Pytest
-* Unit tests
-* Integration tests
-* Evaluation benchmarks
+* Pytest (`backend/tests/`: unit, integration, persistence, retrieval, API, evaluation)
+* Ruff (lint + format)
+* Frontend: ESLint, `tsc --noEmit`, `next build`
+* Deterministic evaluation benchmark
 
 ### Development
 
@@ -618,47 +657,61 @@ The goal is to demonstrate **measurable improvement**, not simply claim that the
 ai-agent-failure-memory/
 │
 ├── backend/
+│   ├── app.py                 # re-exports the FastAPI app
+│   ├── config.py              # Settings from env (offline defaults)
+│   ├── domain.py              # shared enums + time helpers
+│   ├── security.py            # secret redaction
+│   ├── services.py            # build_runtime(): wires store/retriever/agent
+│   │
 │   ├── api/
-│   │   ├── routes.py
-│   │   └── schemas.py
+│   │   ├── routes.py          # FastAPI app + endpoints
+│   │   ├── schemas.py
+│   │   └── serializers.py
 │   │
 │   ├── agent/
-│   │   ├── agent.py
-│   │   ├── executor.py
-│   │   └── tools.py
+│   │   ├── agent.py           # FailureMemoryAgent: full lifecycle
+│   │   ├── planner.py         # task -> plan; prevention -> plan steps
+│   │   ├── executor.py        # runs a plan, classifies outcomes
+│   │   ├── tools.py           # sandboxed tools
+│   │   ├── environment.py     # in-memory SimulatedEnvironment
+│   │   └── models.py
 │   │
 │   ├── memory/
-│   │   ├── models.py
-│   │   ├── store.py
-│   │   ├── retriever.py
-│   │   └── ranking.py
+│   │   ├── models.py          # FailureMemory, RetrievalQuery/Result, feedback
+│   │   ├── store.py           # SQLite persistence, dedup/merge, feedback
+│   │   ├── embedding.py       # hashing / tfidf / optional neural
+│   │   ├── ranking.py         # explainable score
+│   │   └── retriever.py       # selection gates + contradiction detection
 │   │
 │   ├── analysis/
 │   │   ├── failure_analyzer.py
 │   │   ├── root_cause.py
-│   │   └── lesson_extractor.py
+│   │   ├── lesson_extractor.py
+│   │   └── models.py
 │   │
-│   └── evaluation/
-│       ├── benchmark.py
-│       └── metrics.py
+│   ├── llm/
+│   │   └── provider.py        # deterministic default + optional OpenAI
+│   │
+│   ├── evaluation/
+│   │   ├── scenarios.py       # 13 deterministic simulated scenarios
+│   │   ├── metrics.py
+│   │   └── benchmark.py
+│   │
+│   └── tests/                 # unit, integration, API, persistence, evaluation
 │
-├── frontend/
-│   ├── components/
-│   ├── pages/
-│   └── lib/
-│
-├── tests/
-│   ├── test_agent.py
-│   ├── test_memory.py
-│   ├── test_retrieval.py
-│   └── test_evaluation.py
+├── frontend/                  # Next.js 16 (App Router)
+│   ├── app/                   # layout.tsx, page.tsx, globals.css
+│   ├── components/            # Dashboard, panels, cards
+│   └── lib/                   # api client, types, formatting, presets
 │
 ├── docs/
 │   ├── architecture.md
 │   └── evaluation.md
 │
+├── run.py                     # interactive sandbox tool REPL
 ├── .env.example
 ├── requirements.txt
+├── pyproject.toml
 ├── README.md
 └── LICENSE
 ```
@@ -673,8 +726,10 @@ Make sure you have:
 
 * Python 3.11+
 * Git
-* Node.js 20+ (if using the web frontend)
-* An LLM/API provider configured for the project
+* Node.js 20+ (only for the web frontend)
+
+No API key, GPU, or network access is required: the project runs fully offline
+with deterministic defaults, including its tests and benchmark.
 
 ---
 
@@ -713,22 +768,22 @@ pip install -r requirements.txt
 
 ---
 
-## 4. Configure environment variables
+## 4. Configure environment variables (optional)
 
-Copy the example configuration:
+The app runs with no `.env` at all. Every value in [`.env.example`](.env.example)
+is optional, and the defaults are offline and deterministic. Copy it only if you
+want to change something:
 
 ```bash
 cp .env.example .env
 ```
 
-Configure the required AI provider credentials.
-
-Example:
+Common overrides:
 
 ```env
-LLM_API_KEY=your_api_key_here
-LLM_MODEL=your_model_here
-MEMORY_DATABASE=./data/memory.db
+MEMORY_DATABASE=data/memory.db      # SQLite location (":memory:" for ephemeral)
+LLM_PROVIDER=deterministic         # or "openai" (then set LLM_API_KEY)
+EMBEDDING_PROVIDER=hashing         # or "tfidf" / "openai"
 ```
 
 **Never commit `.env` or API keys to GitHub.**
@@ -738,13 +793,16 @@ MEMORY_DATABASE=./data/memory.db
 ## 5. Start the backend
 
 ```bash
-uvicorn backend.api.routes:app --reload
+uvicorn backend.api.routes:app --reload      # or: uvicorn backend.app:app --reload
 ```
 
-The API should become available at:
+The API becomes available at <http://localhost:8000> (interactive docs at
+<http://localhost:8000/docs>).
 
-```text
-http://localhost:8000
+For a quick manual look at the sandbox tools without the HTTP server:
+
+```bash
+python run.py
 ```
 
 ---
@@ -769,22 +827,30 @@ http://localhost:3000
 
 # 🧪 Testing
 
-Run the automated tests:
+Backend tests and linting:
 
 ```bash
-pytest -q
+pytest -q --cov=backend                      # unit, integration, API, persistence, retrieval, evaluation
+ruff check . && ruff format --check .
 ```
 
-Run with verbose output:
+Run a single test file with verbose output:
 
 ```bash
-pytest -v
+pytest backend/tests/test_agent.py -v
 ```
 
-Run the evaluation benchmark:
+Run the evaluation benchmark (writes `data/evaluation_report.json`):
 
 ```bash
-python -m backend.evaluation.benchmark
+python -m backend.evaluation.benchmark       # or: failure-memory-benchmark
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm run lint && npx tsc --noEmit && npm run build
 ```
 
 ---
@@ -919,7 +985,7 @@ Nova assisted with implementing and modifying:
 Agent execution
 Failure detection
 Memory storage
-Semantic retrieval
+Memory retrieval and ranking
 Lesson extraction
 API endpoints
 Frontend components
@@ -1033,9 +1099,32 @@ Recommended security practices:
 
 ---
 
-# 🧪 Future Improvements
+# 🧪 Implemented vs Future
 
-Potential future versions could include:
+Already shipped:
+
+- **Memory confidence** — `effective_confidence` is a Beta posterior over
+  success/failure and helpful/unhelpful feedback.
+- **Memory expiration / decay** — lifecycle status (`outdated`, `incorrect`,
+  `archived`) plus recency decay down-weight stale lessons.
+- **Memory lifecycle automation** — a deterministic policy labels every memory
+  fresh / stale / obsolete / expired, exposes a **dry-run** plan
+  (`GET /api/memories/lifecycle`), and applies monotonic transitions only on an
+  explicit `POST /api/memories/lifecycle/apply`. Lifecycle counts are surfaced in
+  `/api/memories/stats` and the dashboard.
+- **Retrieval-method comparison** — `tfidf`, `bm25`, `embedding`, and `hybrid`
+  are compared head-to-head on the same labelled probes (similarity-only, no
+  ranker weights) so the study isolates the text-similarity method.
+- **Guard-rail control arm** — the benchmark runs a `naive` arm that applies
+  every retrieved memory with no validation, isolating what the gates contribute
+  (fewer harmful applications, same or better prevention).
+- **Contradiction detection** — `GET /api/memories/contradictions` surfaces
+  memories that give conflicting prevention advice, and retrieval suppresses
+  them.
+- **Failure recurrence tracking** — memories are deduplicated/merged and count
+  repeated occurrences.
+
+Still future work:
 
 ### Cross-Agent Learning
 
@@ -1053,32 +1142,6 @@ Agent B
 Avoids failure
 ```
 
-### Memory Confidence
-
-Automatically increase or decrease confidence based on repeated outcomes.
-
-### Memory Expiration
-
-Old or repeatedly invalid lessons can be downgraded or archived.
-
-### Contradiction Detection
-
-Detect when two memories disagree.
-
-```text
-Memory A:
-Use strategy X
-
-Memory B:
-Strategy X caused failure
-
-       ↓
-
-Conflict detected
-       ↓
-Re-evaluate memories
-```
-
 ### Automatic Experimentation
 
 The system could test multiple strategies and remember which one performs best.
@@ -1090,24 +1153,26 @@ The system could test multiple strategies and remember which one performs best.
 ## Phase 1 — MVP
 
 * [x] Project concept
-* [ ] Agent execution
-* [ ] Failure detection
-* [ ] Failure analysis
-* [ ] Structured memory
-* [ ] Memory retrieval
-* [ ] Basic UI
+* [x] Agent execution
+* [x] Failure detection
+* [x] Failure analysis
+* [x] Structured memory
+* [x] Memory retrieval
+* [x] Basic UI
 
 ## Phase 2 — Learning
 
-* [ ] Lesson effectiveness
-* [ ] Memory confidence
-* [ ] Failure recurrence tracking
-* [ ] Before/after evaluation
+* [x] Lesson effectiveness
+* [x] Memory confidence
+* [x] Failure recurrence tracking
+* [x] Before/after evaluation
 
 ## Phase 3 — Advanced Memory
 
-* [ ] Memory contradiction detection
-* [ ] Memory decay
+* [x] Memory contradiction detection
+* [x] Memory decay
+* [x] Memory lifecycle automation (classify / plan / apply)
+* [x] Retrieval-method comparison (tfidf / bm25 / embedding / hybrid)
 * [ ] Cross-agent learning
 * [ ] Automatic strategy selection
 

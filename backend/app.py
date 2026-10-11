@@ -1,15 +1,19 @@
-"""Core failure-memory primitives for the AI agent failsafe."""
+"""Application entry point.
 
+The FastAPI application lives in :mod:`backend.api.routes`; this module simply
+re-exports it so both of the documented launch commands work::
 
-def record_failure(task: str, cause: str) -> dict:
-    """Store a structured failure record: Failure -> Cause -> Lesson."""
-    if not task.strip():
-        raise ValueError("task must not be empty")
-    if not cause.strip():
-        raise ValueError("cause must not be empty")
-    return {"task": task, "cause": cause, "lesson": None}
+    uvicorn backend.app:app --reload
+    uvicorn backend.api.routes:app --reload
+"""
 
+from __future__ import annotations
 
-def lesson_for(record: dict, lesson: str) -> dict:
-    """Attach an actionable lesson to a failure record."""
-    return {**record, "lesson": lesson}
+from backend.api.routes import app, create_app
+
+__all__ = ["app", "create_app"]
+
+if __name__ == "__main__":  # pragma: no cover
+    import uvicorn
+
+    uvicorn.run("backend.app:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,1 +1,12 @@
-requests
+# Core API + models
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+
+# Optional real LLM / embedding providers (only used when explicitly configured)
+requests>=2.31
+
+# Used by the HTTP test client (Starlette TestClient) and API integration tests.
+# Starlette's TestClient prefers httpx2; using plain httpx emits a Starlette
+# deprecation warning, so install the supported client.
+httpx2>=2.0

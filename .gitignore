@@ -4,6 +4,14 @@ __pycache__/
 .coverage
 .pytest_cache/
 .ruff_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Runtime data (SQLite database + generated evaluation reports)
+data/
 
 # Node
 node_modules/
