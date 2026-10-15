@@ -1,0 +1,73 @@
+# .dockerignore — repository-root build context (backend image).
+# NOTE: the frontend image builds from ./frontend and uses frontend/.dockerignore.
+
+# ---------------------------------------------------------------------------
+# Version control / CI
+# ---------------------------------------------------------------------------
+.git
+.github
+.gitignore
+.pre-commit-config.yaml
+
+# ---------------------------------------------------------------------------
+# Python: envs, caches, build artifacts, local installs
+# ---------------------------------------------------------------------------
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+.coverage.*
+build
+dist
+*.egg-info
+**/*.egg-info
+
+# ---------------------------------------------------------------------------
+# Node (build context includes frontend/): installed deps and build output
+# ---------------------------------------------------------------------------
+node_modules
+**/node_modules
+.next
+**/.next
+**/tsconfig.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Local environment files / secrets (never bake into an image)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.docker.example
+
+# ---------------------------------------------------------------------------
+# Runtime data: lives on the host / in the named Docker volume, never in images
+# ---------------------------------------------------------------------------
+data
+
+# ---------------------------------------------------------------------------
+# Not needed by the backend image
+# ---------------------------------------------------------------------------
+frontend
+docs
+examples
+scripts
+*.md
+# Test suite: run on the host (see README "Testing"); never imported at runtime.
+backend/tests
+
+# ---------------------------------------------------------------------------
+# IDE / OS / logs
+# ---------------------------------------------------------------------------
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.log
+logs

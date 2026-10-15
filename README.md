@@ -728,6 +728,9 @@ Make sure you have:
 * Git
 * Node.js 20+ (only for the web frontend)
 
+> **No local Python or Node.js?** Skip this whole section and run the stack
+> with Docker: see [🐳 Docker (Windows / macOS / Linux)](#-docker-windows--macos--linux).
+
 No API key, GPU, or network access is required: the project runs fully offline
 with deterministic defaults, including its tests and benchmark.
 
@@ -822,6 +825,167 @@ Then open:
 ```text
 http://localhost:3000
 ```
+
+---
+
+# 🐳 Docker (Windows / macOS / Linux)
+
+Run the **complete application** with Linux containers — no Python or Node.js
+on the host. The only requirement is Docker Desktop (Windows / macOS) or
+Docker Engine + Compose plugin (Linux), with Compose **v2** (`docker compose`,
+tested with v5.x).
+
+> **Windows note:** this stack runs in **Linux containers** (the default mode
+> of Docker Desktop / Docker Engine on Windows). Native *Windows* containers
+> are **not supported** and have not been tested.
+
+## Quick start
+
+```bash
+# optional: configure ports / backend knobs first
+cp .env.docker.example .env
+
+# build images and start backend + frontend
+docker compose up --build
+```
+
+Then open:
+
+```text
+Dashboard:  http://localhost:3000
+API + docs: http://localhost:8000/docs
+Health:     http://localhost:8000/api/health
+```
+
+The first build takes a few minutes (pip install, `npm ci`, `next build`);
+later starts reuse cached image layers. Both services report their health in
+`docker compose ps` and only start the frontend once the backend is healthy.
+
+## Everyday commands
+
+| Task | Command |
+| --- | --- |
+| Start (detached) | `docker compose up --build -d` |
+| Stop, keep data | `docker compose stop` |
+| Stop and remove containers | `docker compose down` |
+| Status + health checks | `docker compose ps` |
+| Follow logs (both services) | `docker compose logs -f --tail=200` |
+| Follow logs (one service) | `docker compose logs -f backend` |
+| Restart one service | `docker compose restart backend` |
+| Update after `git pull` | `docker compose up --build -d` |
+| Remove containers + local images | `docker compose down --rmi local` |
+| **Delete all stored data** | `docker compose down -v` (⚠️ destructive — back up first) |
+
+Plain `docker compose down` / `up` **never** deletes the SQLite data: it lives
+in a named Docker volume (`sqlite_data`, created on first start) and the host's
+`./data` directory is not used or modified by the containers.
+
+## Ports
+
+Ports are configurable in `.env` (see [`.env.docker.example`](.env.docker.example)):
+
+```env
+BACKEND_PORT=8000
+FRONTEND_PORT=3000
+```
+
+The dashboard's browser-facing API URL (`http://localhost:$BACKEND_PORT`) is
+**baked into the frontend image at build time**, so after changing
+`BACKEND_PORT` rebuild it:
+
+```bash
+docker compose up --build
+```
+
+CORS origins on the backend follow `FRONTEND_PORT` automatically.
+
+## Configuration
+
+Containers read the same environment variables as a local run
+(`MEMORY_DATABASE`, `LLM_*`, `EMBEDDING_*`, `RETRIEVAL_*`, `APP_ENV`, …) —
+all documented in [`.env.example`](.env.example). In Docker, pass them through
+`compose.yaml` → `services.backend.environment` (the SQLite paths there must
+stay pointed at `/app/data`). Defaults are offline and deterministic: no API
+key is required.
+
+## Evaluation workflow inside Docker
+
+The dashboard's **Evaluation** panel calls the API
+(`POST /api/evaluation/run`, then `GET /api/evaluation/report`) and the report
+is written to the persistent volume, so it survives restarts. The same
+benchmark can be run from the CLI:
+
+```bash
+docker compose exec backend python -m backend.evaluation.benchmark
+```
+
+Verify the stored report through the API (this is what the dashboard renders):
+
+```bash
+curl -s http://localhost:8000/api/evaluation/report | head -c 400
+```
+
+## Back up / restore persistent data
+
+SQLite (`memory.db`) and the evaluation report live in the named volume. A
+portable backup that works in bash, zsh, and PowerShell:
+
+```bash
+# backup (writes memory-backup.tgz into the current directory)
+docker compose exec backend sh -c 'cd /app/data && tar czf /tmp/backup.tgz .'
+docker cp ai-memory-backend:/tmp/backup.tgz ./memory-backup.tgz
+
+# restore (run while the stack is idle; the restart reopens the restored files)
+docker compose cp ./memory-backup.tgz backend:/tmp/backup.tgz
+docker compose exec backend sh -c 'cd /app/data && rm -f memory.db memory.db-* evaluation_report.json && tar xzf /tmp/backup.tgz'
+docker compose restart backend
+```
+
+List the raw volume with `docker volume ls --filter name=sqlite_data` if you
+prefer host-level tooling.
+
+## Multi-platform images (linux/amd64 + linux/arm64)
+
+Both Dockerfiles use official multi-arch base images (`python:3.11.17-slim`,
+`node:24.22.0-slim`) and are **prepared** for Buildx. Local images build for
+your host's architecture automatically. To build *and publish* a combined
+manifest for both platforms (requires an explicit authorization decision —
+nothing is published automatically):
+
+```bash
+# once per machine
+docker buildx create --name multiplatform --use
+
+# backend (context = repository root)
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t YOUR_REGISTRY/ai-memory-failsafe-backend:latest \
+  -f backend/Dockerfile --push .
+
+# frontend (context = ./frontend)
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t YOUR_REGISTRY/ai-memory-failsafe-frontend:latest \
+  -f frontend/Dockerfile --push ./frontend
+```
+
+Notes:
+
+* `--push` is required for multi-platform output (a local `--load` can only
+  hold one platform at a time).
+* To run a single foreign platform locally, enable QEMU emulation first:
+  `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
+* Publishing to a registry (including the exact tag) needs explicit approval.
+
+## Verification status
+
+| Target | Status |
+| --- | --- |
+| `linux/amd64` (Linux host) | **Verified locally**: images build, stack starts, health checks pass, dashboard ⇄ API integration (CORS + baked browser URL), evaluation run, SQLite persistence across `restart`, `stop`/`start`, **and** container recreation, backup/restore round-trip, clean logs, non-root users |
+| `linux/arm64` | **Unverified locally** (this machine has no Buildx/QEMU); base images and Dockerfiles are multi-arch-ready |
+| macOS / Windows hosts | **Unverified in this environment** — Docker Desktop runs the same Linux images; all documented commands are OS-independent |
+| Windows native containers | **Not supported** (Linux containers only) |
+
+Containers do **not** run the test suite; tests and lint run on the host as
+described in [🧪 Testing](#-testing).
 
 ---
 

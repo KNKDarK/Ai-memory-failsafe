@@ -20,3 +20,6 @@ node_modules/
 # Env
 .env
 .env.local
+
+# Docker backup archives (see README "Back up / restore persistent data")
+memory-backup*.tgz

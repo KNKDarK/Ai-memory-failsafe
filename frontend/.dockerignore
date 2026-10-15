@@ -1,0 +1,19 @@
+# .dockerignore — frontend build context (compose builds ./frontend with this
+# Dockerfile, so the root .dockerignore does NOT apply here).
+
+# Installed dependencies and build output (always recreated inside the image)
+node_modules
+.next
+tsconfig.tsbuildinfo
+
+# Local environment files — .env.local would otherwise leak the developer's
+# NEXT_PUBLIC_API_BASE_URL into the image; the Dockerfile ARG is authoritative.
+.env
+.env.*
+!.env.docker.example
+
+# Logs / caches / OS noise
+*.log
+logs
+.DS_Store
+Thumbs.db

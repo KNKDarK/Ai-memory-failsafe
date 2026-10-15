@@ -1,0 +1,99 @@
+# AI Agent Failure Memory — cross-platform Docker Compose stack.
+#
+# One-command startup (Linux, macOS, Windows via Docker Desktop):
+#
+#     docker compose up --build
+#
+# Optional configuration: copy .env.docker.example to .env and edit.
+# Compose reads .env for ${...} interpolation (ports and backend knobs).
+# Nothing is published except the two documented host ports below.
+
+services:
+  # -------------------------------------------------------------------------- #
+  # Backend — FastAPI + SQLite (image-built code, no host bind mounts)
+  # -------------------------------------------------------------------------- #
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ai-memory-failsafe-backend:latest
+    container_name: ai-memory-backend
+    restart: unless-stopped
+    ports:
+      # Published so the browser can call the API directly (all frontend API
+      # calls run client-side; see NEXT_PUBLIC_API_BASE_URL below).
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # Persistent paths — must match the volume mount; these always win over
+      # any stray values in a local dev .env.
+      MEMORY_DATABASE: /app/data/memory.db
+      EVALUATION_REPORT_PATH: /app/data/evaluation_report.json
+      APP_ENV: ${APP_ENV:-production}
+      # Browser origins allowed to call the API (the published frontend port).
+      CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000},http://127.0.0.1:${FRONTEND_PORT:-3000}
+      # Optional overrides (see .env.docker.example); defaults are offline.
+      LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
+      LLM_MODEL: ${LLM_MODEL:-deterministic-rule-based}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
+      RETRIEVAL_METHOD: ${RETRIEVAL_METHOD:-auto}
+    volumes:
+      # Named volume: survives `docker compose down` + container recreation and
+      # is initialised from the image's (empty, appuser-owned) /app/data.
+      # The host's ./data directory is intentionally NOT used or modified.
+      - sqlite_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------- #
+  # Frontend — Next.js production server (browser API URL baked at build time)
+  # -------------------------------------------------------------------------- #
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # PUBLIC browser-facing API URL — the host-mapped backend port. This is
+        # what fetch() in the browser uses; it must never be "backend"
+        # (a Docker-internal hostname the user's browser cannot resolve).
+        # Changing BACKEND_PORT requires: docker compose build frontend
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
+    image: ai-memory-failsafe-frontend:latest
+    container_name: ai-memory-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      # INTERNAL service URL, resolvable only on the compose network. Reserved
+      # for server-side fetches (SSR/RSC); the current client-side API layer
+      # (frontend/lib/api.ts) never reads it, so browser JS can't see it.
+      API_BASE_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # SQLite database + evaluation report. Data is only removed explicitly via
+  # `docker compose down -v` (never by plain `down` or `up`).
+  sqlite_data:
+    driver: local
