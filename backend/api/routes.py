@@ -12,17 +12,20 @@ Run locally::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
 import sqlite3
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.agent.environment import SimulatedEnvironment, default_environment
 from backend.api import schemas, serializers
+from backend.api.middleware import BodySizeLimitMiddleware
 from backend.config import Settings, get_settings
 from backend.domain import MemoryStatus
 from backend.evaluation.benchmark import Benchmark, run_scenario_detail
@@ -87,6 +90,58 @@ def _manager(request: Request) -> RuntimeManager:
 
 def _redactor(request: Request) -> SecretRedactor:
     return request.app.state.redactor
+
+
+# --------------------------------------------------------------------------- #
+# API access control (single-user local deployments)
+# --------------------------------------------------------------------------- #
+# A static bearer token read from API_AUTH_TOKEN protects the endpoints that
+# execute tasks or mutate the failure memory. This is deliberately simple: it
+# keeps external auth services out of a single-user local app while stopping
+# anything that can reach the port (other processes, containers, LAN peers)
+# from changing state without the token. It is NOT a deployment security
+# boundary for public exposure -- see the "API security" README section.
+def _extract_presented_token(request: Request) -> str | None:
+    """Return the token presented by the client, or None if absent."""
+    authorization = request.headers.get("authorization")
+    if authorization:
+        scheme, _, credential = authorization.partition(" ")
+        if scheme.strip().lower() == "bearer" and credential.strip():
+            return credential.strip()
+    api_key = request.headers.get("x-api-key")
+    if api_key and api_key.strip():
+        return api_key.strip()
+    return None
+
+
+def _tokens_match(presented: str, expected: str) -> bool:
+    """Constant-time token comparison that also hides length differences."""
+    presented_digest = hashlib.sha256(presented.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    return secrets.compare_digest(presented_digest, expected_digest)
+
+
+async def require_api_token(request: Request) -> None:
+    """Protect a task-execution or memory-mutation endpoint.
+
+    * ``API_AUTH_TOKEN`` unset/empty  -> no enforcement (open local dev mode).
+    * Token missing                  -> 401 with ``WWW-Authenticate: Bearer``.
+    * Token wrong                    -> 403.
+
+    Neither the presented nor the configured token is ever logged or echoed.
+    """
+    expected = _manager(request).settings.api_auth_token
+    if not expected:
+        return
+    presented = _extract_presented_token(request)
+    if presented is None:
+        raise HTTPException(
+            status_code=401,
+            detail="missing API token; send 'Authorization: Bearer <token>' or 'X-API-Key: <token>'",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not _tokens_match(presented, expected):
+        raise HTTPException(status_code=403, detail="invalid API token")
 
 
 def _scenario_or_404(scenario_id: str) -> Scenario:
@@ -184,7 +239,14 @@ def list_scenarios() -> list[dict]:
     return [_scenario_summary(scenario) for scenario in build_scenarios()]
 
 
-@router.post("/scenarios/{scenario_id}/run")
+# Endpoints that execute tasks or mutate the failure memory require the API
+# token when one is configured. Read-only endpoints (health, config, listings,
+# retrieval preview) stay open so container health checks and dashboard reads
+# keep working without credentials.
+_PROTECTED = [Depends(require_api_token)]
+
+
+@router.post("/scenarios/{scenario_id}/run", dependencies=_PROTECTED)
 def run_scenario(scenario_id: str, request: Request) -> dict:
     """Run one scenario twice (baseline and memory) on an isolated store."""
     scenario = _scenario_or_404(scenario_id)
@@ -212,7 +274,7 @@ def run_scenario(scenario_id: str, request: Request) -> dict:
 # --------------------------------------------------------------------------- #
 # Live tasks (persistent store)
 # --------------------------------------------------------------------------- #
-@router.post("/tasks/run")
+@router.post("/tasks/run", dependencies=_PROTECTED)
 def run_task(payload: schemas.RunTaskRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -227,7 +289,7 @@ def run_task(payload: schemas.RunTaskRequest, request: Request) -> dict:
     return serializers.run_dict(run, redactor)
 
 
-@router.post("/tasks/compare")
+@router.post("/tasks/compare", dependencies=_PROTECTED)
 def compare_task(payload: schemas.CompareTasksRequest, request: Request) -> dict:
     """Run the same task in baseline and memory mode with identical environments."""
     runtime = _manager(request).require()
@@ -350,7 +412,7 @@ def get_memory_lifecycle(request: Request) -> dict:
     return lifecycle_report(memories, policy=policy_from_settings(settings))
 
 
-@router.post("/memories/lifecycle/apply")
+@router.post("/memories/lifecycle/apply", dependencies=_PROTECTED)
 def apply_memory_lifecycle(request: Request) -> dict:
     """Apply the deterministic lifecycle policy (active -> outdated -> incorrect -> archived)."""
     runtime = _manager(request).require()
@@ -376,7 +438,7 @@ def get_memory(memory_id: str, request: Request) -> dict:
     }
 
 
-@router.post("/memories/{memory_id}/feedback")
+@router.post("/memories/{memory_id}/feedback", dependencies=_PROTECTED)
 def add_feedback(memory_id: str, payload: schemas.FeedbackRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -391,7 +453,7 @@ def add_feedback(memory_id: str, payload: schemas.FeedbackRequest, request: Requ
     }
 
 
-@router.patch("/memories/{memory_id}/status")
+@router.patch("/memories/{memory_id}/status", dependencies=_PROTECTED)
 def set_memory_status(memory_id: str, payload: schemas.StatusRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -401,7 +463,7 @@ def set_memory_status(memory_id: str, payload: schemas.StatusRequest, request: R
     return {"memory": serializers.memory_dict(memory, redactor)}
 
 
-@router.delete("/memories/{memory_id}")
+@router.delete("/memories/{memory_id}", dependencies=_PROTECTED)
 def delete_memory(memory_id: str, request: Request) -> dict:
     runtime = _manager(request).require()
     deleted = runtime.store.delete(memory_id)
@@ -413,7 +475,7 @@ def delete_memory(memory_id: str, request: Request) -> dict:
 # --------------------------------------------------------------------------- #
 # Evaluation
 # --------------------------------------------------------------------------- #
-@router.post("/evaluation/run")
+@router.post("/evaluation/run", dependencies=_PROTECTED)
 def run_evaluation(payload: schemas.EvaluationRunRequest, request: Request) -> dict:
     settings = _manager(request).settings
     report = Benchmark(settings).run(payload.scenarios)
@@ -437,6 +499,48 @@ def get_evaluation_report(request: Request) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# LLM evaluation (real-model benchmark)
+# --------------------------------------------------------------------------- #
+@router.post("/evaluation/llm/run", dependencies=_PROTECTED)
+def run_llm_evaluation(payload: schemas.LLMEvaluationRequest, request: Request) -> dict:
+    """Run the real-LLM evaluation benchmark (baseline / naive / memory arms).
+
+    Requires a configured LLM provider; when none is available the response
+    reports ``llm_enabled: false`` and the error instead of silently
+    pretending to have evaluated with a model.
+    """
+    from backend.evaluation.llm_benchmark import run_llm_benchmark
+
+    settings = _manager(request).settings
+    return run_llm_benchmark(
+        settings,
+        scenario_ids=payload.scenarios,
+        repetitions=payload.repetitions,
+        modes=payload.modes,
+        save=True,
+    )
+
+
+@router.get("/evaluation/llm/reports")
+def list_llm_evaluation_reports(request: Request) -> dict:
+    """List saved LLM benchmark reports (newest first)."""
+    from backend.evaluation.llm_benchmark import list_reports
+
+    return {"reports": list_reports(_manager(request).settings)}
+
+
+@router.get("/evaluation/llm/reports/{run_id}")
+def get_llm_evaluation_report(run_id: str, request: Request) -> dict:
+    """Fetch one saved LLM benchmark report by run id."""
+    from backend.evaluation.llm_benchmark import load_report
+
+    report = load_report(_manager(request).settings, run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="report not found")
+    return report
+
+
+# --------------------------------------------------------------------------- #
 # App factory
 # --------------------------------------------------------------------------- #
 def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
@@ -449,6 +553,9 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
             "Offline and deterministic by default."
         ),
     )
+    # Added before CORS so CORS stays the outermost middleware and can decorate
+    # 413 responses for browser clients.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -459,6 +566,14 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     app.state.settings = settings
     app.state.redactor = build_default_redactor(settings)
     app.state.runtime_manager = RuntimeManager(settings, runtime)
+    if settings.api_auth_token:
+        logger.info(
+            "API token authentication enabled for task-execution and memory-mutation endpoints"
+        )
+    else:
+        logger.info(
+            "API token authentication disabled; set API_AUTH_TOKEN to protect mutation endpoints"
+        )
 
     @app.get("/")
     def root() -> dict:
@@ -479,6 +594,15 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
         return JSONResponse(
             status_code=503,
             content={"detail": "failure-memory storage is temporarily unavailable"},
+        )
+
+    @app.exception_handler(RecursionError)
+    async def _recursion_handler(request: Request, exc: RecursionError) -> JSONResponse:
+        # A pathologically nested JSON body (beyond the parser's recursion
+        # limit) is a client error, never a server crash.
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "request body is too deeply nested"},
         )
 
     app.include_router(router)

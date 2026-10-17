@@ -50,6 +50,7 @@ class Plan(BaseModel):
     task: str
     task_type: str
     steps: list[PlanStep] = Field(default_factory=list)
+    goal_flags: list[str] = Field(default_factory=list)
     strategy: str = "default"
     notes: list[str] = Field(default_factory=list)
 
@@ -132,6 +133,11 @@ class TaskRun(BaseModel):
     memory_ids_created: list[str] = Field(default_factory=list)
     memory_ids_reinforced: list[str] = Field(default_factory=list)
     retrieved_memory_ids: list[str] = Field(default_factory=list)
+    # Memory ids the *model* was shown and suggested applying (LLM planner
+    # arms only). The controller's trust gates decide what is actually
+    # applied (``memory_ids_applied``); comparing the two is part of the
+    # LLM benchmark's analysis.
+    llm_suggested_memory_ids: list[str] = Field(default_factory=list)
     prevented_failure: bool = False
     prevention_evidence: str = ""
     analyses: list[FailureAnalysis] = Field(default_factory=list)

@@ -33,6 +33,13 @@ COPY . .
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
+# Optional API access token, also inlined at build time: when the backend runs
+# with API_AUTH_TOKEN set, the dashboard sends it as a Bearer header. Empty by
+# default (auth disabled). See the "API security" README section — this is a
+# single-user local mechanism, not a public-deployment security boundary.
+ARG NEXT_PUBLIC_API_TOKEN=
+ENV NEXT_PUBLIC_API_TOKEN=${NEXT_PUBLIC_API_TOKEN}
+
 # The build-time cache (.next/cache) is useless in the runtime image (24+ MB).
 RUN npm run build && rm -rf .next/cache
 

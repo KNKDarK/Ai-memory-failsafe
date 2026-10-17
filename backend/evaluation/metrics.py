@@ -41,6 +41,7 @@ def collect_run_metrics(run: TaskRun, scenario: Scenario, *, mode: str) -> dict:
         "retrieved_ids": list(run.retrieved_memory_ids),
         "selected_ids": _selected_ids(run),
         "applied_ids": applied,
+        "llm_suggested_ids": list(run.llm_suggested_memory_ids),
         "harmful_applied_ids": harmful_applied,
         "prevented_failure": run.prevented_failure,
         "prevention_evidence": run.prevention_evidence,

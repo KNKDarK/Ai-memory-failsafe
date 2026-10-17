@@ -144,6 +144,7 @@ class TaskPlanner:
                     args={"target": target},
                 ),
             ]
+            goal_flags = [f"deployed:{target}"]
         elif task_type == "dependency_check":
             package = detect_package(task)
             steps = [
@@ -175,6 +176,7 @@ class TaskPlanner:
                     args={"suite": "default"},
                 )
             )
+            goal_flags = ["tests_passed"]
         elif task_type == "build_project":
             steps = [
                 PlanStep(id="build", tool="run_build", description="Build the project", args={}),
@@ -185,6 +187,7 @@ class TaskPlanner:
                     args={"suite": "default"},
                 ),
             ]
+            goal_flags = ["built", "tests_passed"]
         elif task_type == "fetch_api_data":
             service = _detect_service(task, env)
             steps = [
@@ -195,13 +198,22 @@ class TaskPlanner:
                     args={"service": service, "retries": 0, "backoff": False},
                 )
             ]
+            goal_flags = [f"api_ok:{service}"]
         elif task_type == "run_migration":
             steps = [
                 PlanStep(id="migrate", tool="noop", description="Run migration", args={}),
             ]
+            goal_flags = []
         else:
             steps = [PlanStep(id="noop", tool="noop", description="No-op", args={})]
-        return Plan(task=task, task_type=task_type, steps=steps, strategy="default")
+            goal_flags = []
+        return Plan(
+            task=task,
+            task_type=task_type,
+            steps=steps,
+            goal_flags=goal_flags,
+            strategy="default",
+        )
 
     # ------------------------------------------------------------------ #
     def apply_preventions(

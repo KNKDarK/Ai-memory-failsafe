@@ -16,6 +16,8 @@ Only the latest version of the **AI Agent Failure Memory** codebase is actively 
 Because this system processes logs, agent actions, trace data, and vector embeddings, please ensure the following safety measures are observed:
 
 * **Secret Redaction**: Never commit `.env` files or API keys. Ensure that runtime logs and error outputs are sanitized to prevent API keys, bearer tokens, or database credentials from being stored in failure memories or vector databases.
+* **API Access Control**: For local single-user deployments, set `API_AUTH_TOKEN` so task-execution and memory-mutation endpoints require a bearer token (see the README "API security" section). This is a local convenience mechanism, not a substitute for a real authenticating proxy if the app is ever network-exposed.
+* **Request Limits**: HTTP request bodies are size-capped (`MAX_REQUEST_BODY_BYTES`, HTTP 413) and nested environment/config structures are depth- and size-bounded (HTTP 422).
 * **Tool Permissions**: Grant AI agents the minimum necessary permissions required for task execution (Principle of Least Privilege).
 * **Input Validation**: Sanitize and validate external inputs and tool execution parameters prior to execution.
 * **Data Privacy in Embeddings**: Ensure sensitive personally identifiable information (PII) or confidential environment details are excluded from semantic embeddings and public vector stores.

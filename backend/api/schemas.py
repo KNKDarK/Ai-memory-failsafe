@@ -12,7 +12,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.agent.environment import SimulatedEnvironment
+from backend.config import get_settings
 from backend.domain import FeedbackVerdict, MemoryStatus
+
+# Keys of user-supplied environment maps are bounded separately from values so
+# a pathological key cannot bypass value-length limits.
+_MAX_ENV_KEY_LENGTH = 256
 
 
 def _validate_task(value: str) -> str:
@@ -20,6 +25,39 @@ def _validate_task(value: str) -> str:
     if not stripped:
         raise ValueError("task must not be blank")
     return stripped
+
+
+def _check_env_structure(
+    value: Any, depth: int, max_depth: int, max_items: int, max_length: int
+) -> None:
+    """Recursively bound the size and depth of a user-supplied structure.
+
+    Enforces, for every node: nesting depth, per-container item count, string
+    length, and key length. Raises ``ValueError`` (-> HTTP 422) on the first
+    violation so a deeply nested or oversized payload can never reach the
+    simulated environment or the agent loop.
+    """
+    if depth > max_depth:
+        raise ValueError(f"environment structure exceeds the maximum nesting depth of {max_depth}")
+    if isinstance(value, dict):
+        if len(value) > max_items:
+            raise ValueError(f"environment mapping exceeds the maximum of {max_items} entries")
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key) > _MAX_ENV_KEY_LENGTH:
+                raise ValueError(
+                    f"environment keys must be strings of at most {_MAX_ENV_KEY_LENGTH} characters"
+                )
+            _check_env_structure(item, depth + 1, max_depth, max_items, max_length)
+    elif isinstance(value, list):
+        if len(value) > max_items:
+            raise ValueError(f"environment list exceeds the maximum of {max_items} items")
+        for item in value:
+            _check_env_structure(item, depth + 1, max_depth, max_items, max_length)
+    elif isinstance(value, str):
+        if len(value) > max_length:
+            raise ValueError(f"environment string values exceed the maximum length of {max_length}")
+    elif value is not None and not isinstance(value, int | float | bool):
+        raise ValueError(f"unsupported value type in environment: {type(value).__name__}")
 
 
 class EnvironmentSpec(BaseModel):
@@ -31,13 +69,46 @@ class EnvironmentSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str | None = None
+    id: str | None = Field(default=None, max_length=256)
     config: dict[str, str] = Field(default_factory=dict)
     secrets: dict[str, str] = Field(default_factory=dict)
     packages: dict[str, str] = Field(default_factory=dict)
     registry: dict[str, str] = Field(default_factory=dict)
     services: dict[str, dict[str, Any]] = Field(default_factory=dict)
     faults: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("config", "secrets", "packages", "registry")
+    @classmethod
+    def _flat_maps_are_bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        limits = get_settings()
+        if len(value) > limits.max_env_items:
+            raise ValueError(
+                f"environment mapping exceeds the maximum of {limits.max_env_items} entries"
+            )
+        for key, item in value.items():
+            if len(key) > _MAX_ENV_KEY_LENGTH:
+                raise ValueError(
+                    f"environment keys must be strings of at most {_MAX_ENV_KEY_LENGTH} characters"
+                )
+            if len(item) > limits.max_env_value_length:
+                raise ValueError(
+                    "environment string values exceed the maximum length of "
+                    f"{limits.max_env_value_length}"
+                )
+        return value
+
+    @field_validator("services", "faults")
+    @classmethod
+    def _nested_structures_are_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        limits = get_settings()
+        _check_env_structure(
+            value,
+            depth=0,
+            max_depth=limits.max_env_depth,
+            max_items=limits.max_env_items,
+            max_length=limits.max_env_value_length,
+        )
+        return value
 
     def to_environment(self) -> SimulatedEnvironment:
         env = SimulatedEnvironment(
@@ -122,3 +193,13 @@ class EvaluationRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scenarios: list[str] | None = None
+
+
+class LLMEvaluationRequest(BaseModel):
+    """Request body for running the LLM-based evaluation benchmark."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenarios: list[str] | None = Field(default=None, max_length=64)
+    repetitions: int = Field(default=1, ge=1, le=10)
+    modes: list[Literal["baseline", "naive", "memory"]] | None = Field(default=None, max_length=3)

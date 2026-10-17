@@ -924,11 +924,17 @@ CORS origins on the backend follow `FRONTEND_PORT` automatically.
 ## Configuration
 
 Containers read the same environment variables as a local run
-(`MEMORY_DATABASE`, `LLM_*`, `EMBEDDING_*`, `RETRIEVAL_*`, `APP_ENV`, …) —
-all documented in [`.env.example`](.env.example). In Docker, pass them through
+(`MEMORY_DATABASE`, `LLM_*`, `EMBEDDING_*`, `RETRIEVAL_*`, `API_AUTH_TOKEN`,
+`MAX_REQUEST_BODY_BYTES`, `APP_ENV`, …) — all documented in
+[`.env.example`](.env.example). In Docker, pass them through
 `compose.yaml` → `services.backend.environment` (the SQLite paths there must
-stay pointed at `/app/data`). Defaults are offline and deterministic: no API
-key is required.
+stay pointed at `/app/data`). No API key is required: the deterministic
+pipeline runs offline, and the optional Ollama provider degrades gracefully to
+rule-based analysis when no daemon is reachable. See
+[API security](#-security) for `API_AUTH_TOKEN` and the request limits, and
+note that the token is **baked into the frontend image at build time** — after
+changing it, run `docker compose up --build` (or `docker compose build
+frontend`).
 
 ## Evaluation workflow inside Docker
 
@@ -1282,6 +1288,65 @@ Recommended security practices:
 * Validate external inputs
 * Limit agent tool permissions
 * Keep sensitive data out of embeddings where possible
+
+## API access control
+
+The API supports a simple token mechanism intended for **single-user local
+deployments**: it stops anything that can reach the port (other processes,
+containers, LAN peers) from executing tasks or mutating the failure memory
+without the token — nothing more.
+
+* **Enable it** by setting `API_AUTH_TOKEN` before starting the backend
+  (empty/unset disables enforcement, which is the open development mode):
+
+  ```bash
+  export API_AUTH_TOKEN="$(openssl rand -hex 32)"
+  uvicorn backend.api.routes:app --port 8000
+  ```
+
+  In Docker, put the same value in `.env` (see
+  [`.env.docker.example`](.env.docker.example)); compose passes it to the
+  backend and bakes it into the dashboard bundle (`NEXT_PUBLIC_API_TOKEN`) so
+  the UI keeps working.
+
+* **Protected endpoints** (task execution + memory mutation):
+  `POST /api/tasks/run`, `POST /api/tasks/compare`,
+  `POST /api/scenarios/{id}/run`, `POST /api/memories/lifecycle/apply`,
+  `POST /api/memories/{id}/feedback`, `PATCH /api/memories/{id}/status`,
+  `DELETE /api/memories/{id}`, `POST /api/evaluation/run`.
+  Read-only endpoints — health, config, listings, retrieval preview, docs —
+  stay open so container health checks and dashboard reads keep working.
+
+* **Presenting the token**: `Authorization: Bearer <token>` or
+  `X-API-Key: <token>`. Missing token → **401** (with `WWW-Authenticate: Bearer`);
+  wrong token → **403**. Comparison is constant-time; the token is never
+  logged, echoed, or exposed by `/api/config`.
+
+* **Rotation**: set a new value (e.g. `openssl rand -hex 32`) and restart the
+  backend. In Docker also rebuild the frontend, since the token is inlined
+  into the browser bundle at build time (`docker compose up --build`).
+
+* **Scope and limits**: this is a shared-secret check for a local,
+  single-user app — **it does not make the application safe for public
+  deployment**. The token is embedded in the dashboard's JavaScript bundle,
+  traffic is not TLS-terminated, and read endpoints remain open. Do not
+  expose the ports beyond localhost/trusted networks; for anything beyond
+  that, put a real authenticating reverse proxy in front.
+
+## Request resource limits
+
+Every request body is capped, regardless of content type (JSON, multipart,
+plain text, chunked bodies without a `Content-Length` header):
+
+* `MAX_REQUEST_BODY_BYTES` (default `262144` = 256 KiB) — oversized requests
+  are rejected with **HTTP 413** before the body reaches the application.
+* User-supplied nested environment/configuration structures are bounded and
+  rejected with **HTTP 422** when they exceed `MAX_ENV_DEPTH` (default `6`),
+  `MAX_ENV_ITEMS` (default `64` entries per mapping/list), or
+  `MAX_ENV_VALUE_LENGTH` (default `4096` characters per string). Pathologically
+  nested JSON bodies are rejected cleanly by the parser (400/422), never a 500.
+* Existing validation is unchanged: tasks stay limited to 2000 characters and
+  malformed JSON is still a client error.
 
 ---
 

@@ -63,6 +63,17 @@ class Settings:
     llm_api_key: str | None = None
     llm_timeout_seconds: float = 30.0
     llm_num_threads: int = 0
+    llm_max_tokens: int = 512
+    llm_temperature: float = 0.0
+    llm_seed: int | None = None
+    llm_context_length: int | None = None
+    # Reasoning models (e.g. qwen3.5 "thinking" variants) spend most of their
+    # token budget on hidden reasoning before answering. On small local models
+    # that is usually counterproductive; disable it explicitly when set.
+    llm_disable_thinking: bool = False
+    # Where the LLM evaluation benchmark writes its reports. Reports use
+    # unique run ids and are never overwritten.
+    llm_benchmark_output_dir: str = "data/llm_benchmarks"
 
     # --- Embeddings ------------------------------------------------------
     # "hashing" (default, offline deterministic vector similarity) or
@@ -109,6 +120,21 @@ class Settings:
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
 
+    # --- API access control ----------------------------------------------
+    # Shared token protecting task-execution and memory-mutation endpoints.
+    # Read from API_AUTH_TOKEN; empty/None disables enforcement (open local
+    # development mode). Never logged, echoed, or serialised anywhere.
+    api_auth_token: str | None = None
+
+    # --- Request resource limits ------------------------------------------
+    # Maximum accepted HTTP request-body size in bytes (413 above it). Guards
+    # every content type, including chunked bodies with no Content-Length.
+    max_request_body_bytes: int = 262144  # 256 KiB
+    # Limits for user-supplied nested environment/configuration structures.
+    max_env_depth: int = 6
+    max_env_items: int = 64
+    max_env_value_length: int = 4096
+
     # --- Misc ------------------------------------------------------------
     environment: str = "development"
 
@@ -131,6 +157,12 @@ class Settings:
             llm_api_key=os.getenv("LLM_API_KEY") or None,
             llm_timeout_seconds=_env_float("LLM_TIMEOUT_SECONDS", 30.0),
             llm_num_threads=_env_int("LLM_NUM_THREADS", 0),
+            llm_max_tokens=_env_int("LLM_MAX_TOKENS", 512),
+            llm_temperature=_env_float("LLM_TEMPERATURE", 0.0),
+            llm_seed=_env_int("LLM_SEED", -1) if os.getenv("LLM_SEED") else None,
+            llm_context_length=_env_int("LLM_CONTEXT_LENGTH", 0) or None,
+            llm_disable_thinking=_env_bool("LLM_DISABLE_THINKING", False),
+            llm_benchmark_output_dir=os.getenv("LLM_BENCHMARK_OUTPUT_DIR", "data/llm_benchmarks"),
             embedding_provider=os.getenv("EMBEDDING_PROVIDER", "hashing").strip().lower(),
             embedding_dim=_env_int("EMBEDDING_DIM", 256),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
@@ -153,14 +185,21 @@ class Settings:
             redact_secrets=_env_bool("REDACT_SECRETS", True),
             max_memory_text_length=_env_int("MAX_MEMORY_TEXT_LENGTH", 4000),
             cors_origins=cors,
+            api_auth_token=os.getenv("API_AUTH_TOKEN") or None,
+            max_request_body_bytes=max(1024, _env_int("MAX_REQUEST_BODY_BYTES", 262144)),
+            max_env_depth=max(1, _env_int("MAX_ENV_DEPTH", 6)),
+            max_env_items=max(1, _env_int("MAX_ENV_ITEMS", 64)),
+            max_env_value_length=max(16, _env_int("MAX_ENV_VALUE_LENGTH", 4096)),
             environment=os.getenv("APP_ENV", "development"),
         )
 
     @property
     def llm_enabled(self) -> bool:
         """True when a *real* LLM provider is configured and usable."""
-        return (self.llm_provider == "ollama" and bool(self.llm_model)) or (
-            self.llm_provider == "openai" and bool(self.llm_api_key)
+        return (
+            (self.llm_provider == "llama.cpp" and bool(self.llm_model))
+            or (self.llm_provider == "ollama" and bool(self.llm_model))
+            or (self.llm_provider == "openai" and bool(self.llm_api_key))
         )
 
     @property

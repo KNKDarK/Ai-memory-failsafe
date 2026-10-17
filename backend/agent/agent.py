@@ -132,10 +132,21 @@ class FailureMemoryAgent:
 
             if policy.retrieve:
                 retrieved = self._retrieve(task, task_type, base_plan, validate=policy.validate)
+                plan = base_plan
+                planner = getattr(self.planner, "plan_with_memory", None)
+                if callable(planner):
+                    # LLM planner: the model sees the retrieved memories (its
+                    # only difference between the naive and memory arms) and
+                    # proposes a plan; the deterministic trust gates below
+                    # still decide which memories are actually applied.
+                    plan, suggested_ids = planner(task, retrieved, env)
+                    for memory_id in suggested_ids:
+                        if memory_id not in run.llm_suggested_memory_ids:
+                            run.llm_suggested_memory_ids.append(memory_id)
                 recommendations = self._build_recommendations(
                     retrieved, task_type, base_plan, validate=policy.validate
                 )
-                plan, applied_ids = self.planner.apply_preventions(base_plan, recommendations)
+                plan, applied_ids = self.planner.apply_preventions(plan, recommendations)
                 run.retrieved_memory_ids = [
                     r.memory.id for r in retrieved if r.selected or not policy.validate
                 ]
@@ -173,6 +184,24 @@ class FailureMemoryAgent:
 
             run.final_outcome = record.outcome
             previous_failures.append(record)
+
+            # Let planners that accept feedback (the LLM planner) see what
+            # actually went wrong, so the next attempt can change strategy.
+            note_failure = getattr(self.planner, "record_attempt_failure", None)
+            if callable(note_failure):
+                note_failure(
+                    task,
+                    record.error or "attempt failed",
+                    [
+                        {
+                            "tool": trace.step.tool,
+                            "args": dict(trace.step.args),
+                            "error": trace.result.error,
+                        }
+                        for trace in record.traces
+                        if not trace.result.ok
+                    ],
+                )
 
             if policy.learn:
                 analysis = self.analyzer.analyze(record)

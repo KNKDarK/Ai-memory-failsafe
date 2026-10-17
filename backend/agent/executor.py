@@ -104,6 +104,13 @@ class AgentExecutor:
             if aborted:
                 break
 
+        if not aborted and outcome is OutcomeType.SUCCESS:
+            missing_goals = [flag for flag in plan.goal_flags if not env.has_flag(flag)]
+            if missing_goals:
+                outcome = OutcomeType.TASK_FAILURE
+                error = f"task goal not achieved: missing state flags {', '.join(missing_goals)}"
+                error_code = "verification_failed"
+
         record = ExecutionRecord(
             execution_id=execution_id,
             task=plan.task,

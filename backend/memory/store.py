@@ -236,53 +236,56 @@ class MemoryStore:
         keeps the highest confidence. It returns ``(memory, created)`` where
         ``created`` is False when an existing memory was updated.
         """
-        existing = self.find_by_dedup(memory)
-        if existing is None:
-            return self.save(memory), True
+        with self._lock:
+            existing = self.find_by_dedup(memory)
+            if existing is None:
+                return self.save(memory), True
 
-        merged = existing.model_copy(
-            update={
-                "occurrence_count": existing.occurrence_count + 1,
-                "evidence": _union(existing.evidence, memory.evidence),
-                "tags": _union(existing.tags, memory.tags),
-                "confidence": max(existing.confidence, memory.confidence),
-                "cause_status": (
-                    memory.cause_status
-                    if memory.cause_status == existing.cause_status
-                    else existing.cause_status
-                ),
-                "updated_at": utcnow(),
-            }
-        )
-        # If the stored memory was discredited, refresh it from the new evidence.
-        if existing.status in {MemoryStatus.INCORRECT, MemoryStatus.OUTDATED}:
-            merged = merged.model_copy(
+            merged = existing.model_copy(
                 update={
-                    "lesson": memory.lesson,
-                    "prevention": memory.prevention,
-                    "prevention_actions": memory.prevention_actions,
-                    "status": MemoryStatus.ACTIVE,
+                    "occurrence_count": existing.occurrence_count + 1,
+                    "evidence": _union(existing.evidence, memory.evidence),
+                    "tags": _union(existing.tags, memory.tags),
+                    "confidence": max(existing.confidence, memory.confidence),
+                    "cause_status": (
+                        memory.cause_status
+                        if memory.cause_status == existing.cause_status
+                        else existing.cause_status
+                    ),
+                    "updated_at": utcnow(),
                 }
             )
-        return self.save(merged), False
+            # New observations can refresh stale advice, but a reviewer-rejected
+            # memory stays excluded until an explicit status change re-enables it.
+            if existing.status is MemoryStatus.OUTDATED:
+                merged = merged.model_copy(
+                    update={
+                        "lesson": memory.lesson,
+                        "prevention": memory.prevention,
+                        "prevention_actions": memory.prevention_actions,
+                        "status": MemoryStatus.ACTIVE,
+                    }
+                )
+            return self.save(merged), False
 
     def record_use(
         self, memory_id: str, *, success: bool, applied: bool = True
     ) -> FailureMemory | None:
         """Update usage statistics after a memory was (or was not) applied."""
-        memory = self.get(memory_id)
-        if memory is None:
-            return None
-        updated = memory.model_copy(
-            update={
-                "use_count": memory.use_count + 1,
-                "success_count": memory.success_count + (1 if success else 0),
-                "failure_count": memory.failure_count + (0 if success else 1),
-                "last_used_at": utcnow(),
-                "updated_at": utcnow(),
-            }
-        )
-        return self.save(updated)
+        with self._lock:
+            memory = self.get(memory_id)
+            if memory is None:
+                return None
+            updated = memory.model_copy(
+                update={
+                    "use_count": memory.use_count + 1,
+                    "success_count": memory.success_count + (1 if success else 0),
+                    "failure_count": memory.failure_count + (0 if success else 1),
+                    "last_used_at": utcnow(),
+                    "updated_at": utcnow(),
+                }
+            )
+            return self.save(updated)
 
     def add_feedback(
         self,
@@ -294,16 +297,16 @@ class MemoryStore:
         applied: bool = False,
     ) -> tuple[FailureMemory | None, MemoryFeedback]:
         """Attach feedback and update the memory's trust counters/status."""
-        memory = self.get(memory_id)
-        feedback = MemoryFeedback(
-            id=uuid.uuid4().hex,
-            memory_id=memory_id,
-            verdict=verdict,
-            comment=comment or "",
-            execution_id=execution_id,
-            applied=applied,
-        )
         with self._lock:
+            memory = self.get(memory_id)
+            feedback = MemoryFeedback(
+                id=uuid.uuid4().hex,
+                memory_id=memory_id,
+                verdict=verdict,
+                comment=comment or "",
+                execution_id=execution_id,
+                applied=applied,
+            )
             self._conn.execute(
                 "INSERT INTO memory_feedback (id, memory_id, verdict, comment, execution_id, "
                 "applied, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -318,28 +321,28 @@ class MemoryStore:
                 ),
             )
             self._conn.commit()
+            if memory is None:
+                return None, feedback
 
-        if memory is None:
-            return None, feedback
+            update: dict = {"updated_at": utcnow()}
+            if verdict == FeedbackVerdict.USEFUL:
+                update["helpful_count"] = memory.helpful_count + 1
+            elif verdict == FeedbackVerdict.UNHELPFUL:
+                update["unhelpful_count"] = memory.unhelpful_count + 1
+            elif verdict == FeedbackVerdict.OUTDATED:
+                update["status"] = MemoryStatus.OUTDATED
+            elif verdict == FeedbackVerdict.INCORRECT:
+                update["status"] = MemoryStatus.INCORRECT
 
-        update: dict = {"updated_at": utcnow()}
-        if verdict == FeedbackVerdict.USEFUL:
-            update["helpful_count"] = memory.helpful_count + 1
-        elif verdict == FeedbackVerdict.UNHELPFUL:
-            update["unhelpful_count"] = memory.unhelpful_count + 1
-        elif verdict == FeedbackVerdict.OUTDATED:
-            update["status"] = MemoryStatus.OUTDATED
-        elif verdict == FeedbackVerdict.INCORRECT:
-            update["status"] = MemoryStatus.INCORRECT
-
-        updated = memory.model_copy(update=update)
-        return self.save(updated), feedback
+            updated = memory.model_copy(update=update)
+            return self.save(updated), feedback
 
     def set_status(self, memory_id: str, status: MemoryStatus) -> FailureMemory | None:
-        memory = self.get(memory_id)
-        if memory is None:
-            return None
-        return self.save(memory.model_copy(update={"status": status, "updated_at": utcnow()}))
+        with self._lock:
+            memory = self.get(memory_id)
+            if memory is None:
+                return None
+            return self.save(memory.model_copy(update={"status": status, "updated_at": utcnow()}))
 
     def delete(self, memory_id: str) -> bool:
         with self._lock:

@@ -16,12 +16,13 @@ from backend.services import Runtime, build_runtime
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path) -> Settings:
     return Settings(
         memory_database=":memory:",
         embedding_provider="hashing",
         llm_provider="deterministic",
         default_max_attempts=2,
+        llm_benchmark_output_dir=str(tmp_path / "llm_benchmarks"),
     )
 
 
@@ -55,7 +56,11 @@ def api_client(tmp_path) -> Iterator[TestClient]:  # noqa: F821 - imported lazil
             embedding_provider="hashing",
             llm_provider="deterministic",
             evaluation_report_path=str(tmp_path / "evaluation_report.json"),
+            llm_benchmark_output_dir=str(tmp_path / "llm_benchmarks"),
         )
     )
     with TestClient(app) as client:
         yield client
+    runtime = app.state.runtime_manager.maybe()
+    if runtime is not None:
+        runtime.store.close()

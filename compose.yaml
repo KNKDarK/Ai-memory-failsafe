@@ -42,6 +42,11 @@ services:
       LLM_NUM_THREADS: ${LLM_NUM_THREADS:-0}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
       RETRIEVAL_METHOD: ${RETRIEVAL_METHOD:-auto}
+      # API access control: when set (e.g. `openssl rand -hex 32`), task-run and
+      # memory-mutation endpoints require it. Empty disables enforcement.
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+      # Maximum accepted HTTP request body size (bytes); oversized -> HTTP 413.
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-262144}
     volumes:
       # Named volume: survives `docker compose down` + container recreation and
       # is initialised from the image's (empty, appuser-owned) /app/data.
@@ -72,6 +77,10 @@ services:
         # (a Docker-internal hostname the user's browser cannot resolve).
         # Changing BACKEND_PORT requires: docker compose build frontend
         NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
+        # Same token as services.backend above, baked into the dashboard bundle
+        # so browser requests stay authorized. Requires a frontend rebuild
+        # after rotating API_AUTH_TOKEN.
+        NEXT_PUBLIC_API_TOKEN: ${API_AUTH_TOKEN:-}
     image: ai-memory-failsafe-frontend:latest
     container_name: ai-memory-frontend
     restart: unless-stopped

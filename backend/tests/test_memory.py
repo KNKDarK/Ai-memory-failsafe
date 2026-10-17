@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from pydantic import ValidationError
 
@@ -42,6 +44,22 @@ def test_persists_across_connections(tmp_path) -> None:
         assert loaded is not None
         assert loaded.id == "persisted"
         assert second.count() == 1
+    finally:
+        second.close()
+
+
+def test_reviewer_rejection_stays_excluded_after_reopen(tmp_path) -> None:
+    path = str(tmp_path / "memory.db")
+    first = MemoryStore(path)
+    first.save(make_memory(id="rejected", status=MemoryStatus.INCORRECT))
+    first.close()
+
+    second = MemoryStore(path)
+    try:
+        loaded = second.get("rejected")
+        assert loaded is not None
+        assert loaded.status is MemoryStatus.INCORRECT
+        assert second.list(include_inactive=False) == []
     finally:
         second.close()
 
@@ -101,12 +119,52 @@ def test_merge_or_store_deduplicates(store: MemoryStore) -> None:
     assert store.count() == 1
 
 
-def test_merge_refreshes_a_discredited_memory(store: MemoryStore) -> None:
-    store.save(make_memory(id="a", status=MemoryStatus.INCORRECT, prevention="old prevention"))
+def test_concurrent_memory_updates_do_not_lose_counts(store: MemoryStore) -> None:
+    """Read-modify-write operations stay atomic on the shared SQLite connection."""
+    store.save(make_memory(id="shared"))
+    update_count = 120
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(lambda _: store.record_use("shared", success=True), range(update_count)))
+
+    memory = store.get("shared")
+    assert memory is not None
+    assert memory.use_count == update_count
+    assert memory.success_count == update_count
+
+
+def test_concurrent_learning_merges_duplicate_lessons(store: MemoryStore) -> None:
+    """Equivalent observations from concurrent requests create one memory row."""
+    observation_count = 80
+
+    def learn(index: int) -> None:
+        store.merge_or_store(make_memory(id=f"observation-{index}"))
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(learn, range(observation_count)))
+
+    memories = store.list()
+    assert len(memories) == 1
+    assert memories[0].occurrence_count == observation_count
+
+
+def test_merge_refreshes_an_outdated_memory(store: MemoryStore) -> None:
+    store.save(make_memory(id="a", status=MemoryStatus.OUTDATED, prevention="old prevention"))
     merged, created = store.merge_or_store(make_memory(id="b", prevention="new prevention"))
     assert created is False
     assert merged.status is MemoryStatus.ACTIVE
     assert merged.prevention == "new prevention"
+
+
+def test_merge_does_not_revive_a_reviewer_rejected_memory(store: MemoryStore) -> None:
+    store.save(make_memory(id="rejected", status=MemoryStatus.INCORRECT))
+
+    merged, created = store.merge_or_store(make_memory(id="new-observation"))
+
+    assert created is False
+    assert merged.id == "rejected"
+    assert merged.status is MemoryStatus.INCORRECT
+    assert store.count(include_inactive=False) == 0
 
 
 def test_record_use_updates_counters(store: MemoryStore) -> None:

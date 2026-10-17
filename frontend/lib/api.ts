@@ -33,6 +33,12 @@ export const API_BASE = (
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 ).replace(/\/+$/, "");
 
+// Optional shared token for the backend's API access control. When the backend
+// is started with API_AUTH_TOKEN set, pass the same value here (inlined at
+// build time) so the dashboard can keep running tasks and mutating memories.
+// Single-user local deployments only — see the "API security" README section.
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || "";
+
 export class ApiError extends Error {
   status: number;
 
@@ -50,6 +56,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         "Content-Type": "application/json",
+        ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
         ...(init?.headers ?? {}),
       },
       cache: "no-store",
