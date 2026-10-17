@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Agent Failure Memory — Dashboard UI
 
-## Getting Started
+The control-plane UI for **AI Agent Failure Memory**. Built with Next.js 16
+(Turbopack) + React 19 and TypeScript, styled with **hand-written dark CSS**
+(no Tailwind, no chart library) so the whole demo stays offline-first and
+dependency-light.
 
-First, run the development server:
+Every number on screen is read from the live FastAPI backend — nothing in the
+UI is hardcoded.
+
+## Quick Start
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure the environment
+
+```bash
+cp .env.example .env.local
+```
+
+`.env.local` is git-ignored. It controls where the browser looks for the API:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+The committed default (`lib/api.ts`) is `http://localhost:8000`, matching the
+main README. If port 8000 is already taken on your machine, run the backend on
+8001 instead and point this value at it (this is what `.env.local` does in the
+demo environment).
+
+### 3. Start the backend (from the repository root)
+
+```bash
+uvicorn backend.app:app --port 8001 --reload
+# or: uvicorn backend.api.routes:app --reload
+```
+
+### 4. Start the development server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000> in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+If the backend is unreachable, the UI degrades to an error banner instead of
+showing stale or invented numbers.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Key features (the real tabs)
 
-## Learn More
+| Tab | What it visualizes |
+| --- | --- |
+| **Overview** | Health + configuration header, four live metric cards, evaluation-report highlights, memory-growth and failure-category charts. |
+| **Agent Sandbox** | Chat-style task execution. Pick a preset or type a prompt, choose a mode (**memory** / **naive** / **baseline**), then inspect the step-by-step execution trace, the plan changes, and a consolidated table showing *why each memory was — or wasn't — used* (similarity, rank, gates, reason). |
+| **Scenarios** | The 13 deterministic simulated scenarios; run one in isolation and compare baseline vs. memory. |
+| **Retrieval** | Read-only retrieval preview: similarity score, matched terms, rank, and the score + similarity gate decisions behind every selection. |
+| **Memory Bank** | Table of stored lessons: failure, root cause, prevention actions, trust, uses / success rate, and lifecycle state (fresh / stale / obsolete / expired). Rows expand inline for feedback and lifecycle preview/apply. |
+| **Evaluation** | The generated benchmark report rendered as SVG charts: the three evaluation arms, the retrieval-method comparison, and the memory-lifecycle breakdown. |
 
-To learn more about Next.js, take a look at the following resources:
+## Endpoints consumed
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `GET /api/health`, `GET /api/config`
+- `GET /api/evaluation/report` (regenerate with `python -m backend.evaluation.benchmark`)
+- `GET /api/memories`, `GET /api/memories/stats`, `GET /api/memories/lifecycle`
+- `POST /api/tasks/run`, `POST /api/tasks/compare`, `POST /api/scenarios/{id}/run`
+- `POST /api/retrieval/preview`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Verifying the UI build
 
-## Deploy on Vercel
+```bash
+npx tsc --noEmit   # type-check
+npm run build      # production build
+npm run lint       # eslint
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Recorded demo
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A step-by-step walkthrough for a screen recording lives in
+[`../docs/demo.md`](../docs/demo.md).

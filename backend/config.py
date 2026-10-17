@@ -56,12 +56,13 @@ class Settings:
     evaluation_report_path: str = "data/evaluation_report.json"
 
     # --- LLM provider ----------------------------------------------------
-    # "deterministic" (default, offline) or "openai" (optional, needs a key).
+    # "deterministic" (default, offline), "ollama" (local), or "openai".
     llm_provider: str = "deterministic"
     llm_model: str = "deterministic-rule-based"
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str | None = None
     llm_timeout_seconds: float = 30.0
+    llm_num_threads: int = 0
 
     # --- Embeddings ------------------------------------------------------
     # "hashing" (default, offline deterministic vector similarity) or
@@ -129,6 +130,7 @@ class Settings:
             llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
             llm_api_key=os.getenv("LLM_API_KEY") or None,
             llm_timeout_seconds=_env_float("LLM_TIMEOUT_SECONDS", 30.0),
+            llm_num_threads=_env_int("LLM_NUM_THREADS", 0),
             embedding_provider=os.getenv("EMBEDDING_PROVIDER", "hashing").strip().lower(),
             embedding_dim=_env_int("EMBEDDING_DIM", 256),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
@@ -157,7 +159,9 @@ class Settings:
     @property
     def llm_enabled(self) -> bool:
         """True when a *real* LLM provider is configured and usable."""
-        return self.llm_provider == "openai" and bool(self.llm_api_key)
+        return (self.llm_provider == "ollama" and bool(self.llm_model)) or (
+            self.llm_provider == "openai" and bool(self.llm_api_key)
+        )
 
     @property
     def uses_memory_database(self) -> bool:

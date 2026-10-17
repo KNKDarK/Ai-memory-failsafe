@@ -17,14 +17,6 @@ ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 
 # --------------------------------------------------------------------------- #
-# Dependencies stage — production dependencies only (exact via package-lock.json)
-# --------------------------------------------------------------------------- #
-FROM base AS deps
-ENV NODE_ENV=production
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
-
-# --------------------------------------------------------------------------- #
 # Builder stage — full install (build tooling) + `next build`
 # --------------------------------------------------------------------------- #
 FROM base AS builder
@@ -54,15 +46,11 @@ ENV NODE_ENV=production \
 
 RUN groupadd --system appuser && useradd --system --gid appuser --create-home appuser
 
-# Runtime dependencies and build output. `--chown` grants the non-root user
-# ownership directly in the layer (a follow-up `RUN chown -R` would duplicate
-# every file in an extra layer and roughly double the image size).
-COPY --from=deps --chown=appuser:appuser /app/node_modules ./node_modules
-COPY --from=builder --chown=appuser:appuser /app/.next ./.next
+# Standalone output contains only the traced production dependencies needed by
+# the server, avoiding the full production node_modules tree.
+COPY --from=builder --chown=appuser:appuser /app/.next/standalone ./
+COPY --from=builder --chown=appuser:appuser /app/.next/static ./.next/static
 COPY --from=builder --chown=appuser:appuser /app/public ./public
-COPY --from=builder --chown=appuser:appuser /app/package.json ./package.json
-COPY --from=builder --chown=appuser:appuser /app/package-lock.json ./package-lock.json
-COPY --from=builder --chown=appuser:appuser /app/next.config.ts ./next.config.ts
 
 USER appuser
 
@@ -74,4 +62,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # Production server (next start defaults to 0.0.0.0; bound explicitly anyway).
 # Exec-form `node` (not `npm start`) so signals are handled by the server.
-CMD ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]
+CMD ["node", "server.js"]

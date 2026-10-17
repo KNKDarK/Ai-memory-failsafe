@@ -5,7 +5,22 @@
 [![Hackathon](https://img.shields.io/badge/Hackathon-Build%20With%20Nova%202026-blue)](#)
 [![Status](https://img.shields.io/badge/Status-Prototype-orange)](#)
 [![AI](https://img.shields.io/badge/AI-Agentic%20Memory-purple)](#)
+[![Tests](https://img.shields.io/badge/Tests-pytest%20suite%20green-brightgreen)](backend/tests)
+[![Reproducible](https://img.shields.io/badge/Reproducible-Deterministic%20%2B%20Offline-brightgreen)](#)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
+
+> 💡 **Scope & Execution Environment Notice**
+>
+> **What is live & deterministic:** SQLite persistence, the failure-analysis
+> schema, confidence scoring, memory retrieval & gating, lifecycle decay, and
+> the Next.js control plane — all offline, CPU-only, with no external network
+> calls, API keys, or GPU required.
+>
+> **What is simulated:** the agent tool-execution layer runs against an
+> in-memory sandbox. Benchmark results come from a deterministic 13-scenario
+> suite built to validate the failure → lesson → plan-modification loop without
+> external network dependencies. Every simulated result is labelled as simulated
+> in the report and in the UI.
 
 ---
 
@@ -700,12 +715,15 @@ ai-agent-failure-memory/
 │   └── tests/                 # unit, integration, API, persistence, evaluation
 │
 ├── frontend/                  # Next.js 16 (App Router)
+│   ├── README.md              # UI setup + feature map
+│   ├── .env.example           # NEXT_PUBLIC_API_BASE_URL
 │   ├── app/                   # layout.tsx, page.tsx, globals.css
-│   ├── components/            # Dashboard, panels, cards
+│   ├── components/            # Dashboard, panels, cards, SVG charts
 │   └── lib/                   # api client, types, formatting, presets
 │
 ├── docs/
 │   ├── architecture.md
+│   ├── demo.md                # recording walkthrough (failure → prevention)
 │   └── evaluation.md
 │
 ├── run.py                     # interactive sandbox tool REPL
@@ -825,6 +843,10 @@ Then open:
 ```text
 http://localhost:3000
 ```
+
+UI setup, the tab-by-tab feature map, and the environment variable live in
+[`frontend/README.md`](frontend/README.md). For a guided screen recording of the
+failure → cause → lesson → prevention loop, follow [`docs/demo.md`](docs/demo.md).
 
 ---
 

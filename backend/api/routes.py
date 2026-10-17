@@ -33,6 +33,7 @@ from backend.memory.lifecycle import (
     policy_from_settings,
 )
 from backend.memory.retriever import find_contradictions
+from backend.resources import detect_resources
 from backend.security import SecretRedactor, build_default_redactor
 from backend.services import Runtime, build_runtime
 
@@ -167,6 +168,12 @@ def config(request: Request) -> dict:
         "default_max_attempts": settings.default_max_attempts,
         "redact_secrets": settings.redact_secrets,
     }
+
+
+@router.get("/resources")
+def resources() -> dict:
+    """Report current host/container capacity used for model throttling."""
+    return detect_resources().as_dict()
 
 
 # --------------------------------------------------------------------------- #

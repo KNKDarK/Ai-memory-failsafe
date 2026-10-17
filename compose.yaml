@@ -19,6 +19,9 @@ services:
     image: ai-memory-failsafe-backend:latest
     container_name: ai-memory-backend
     restart: unless-stopped
+    extra_hosts:
+      # Allow the container to reach an Ollama daemon running on the host.
+      - "host.docker.internal:host-gateway"
     ports:
       # Published so the browser can call the API directly (all frontend API
       # calls run client-side; see NEXT_PUBLIC_API_BASE_URL below).
@@ -32,9 +35,11 @@ services:
       # Browser origins allowed to call the API (the published frontend port).
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000},http://127.0.0.1:${FRONTEND_PORT:-3000}
       # Optional overrides (see .env.docker.example); defaults are offline.
-      LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
-      LLM_MODEL: ${LLM_MODEL:-deterministic-rule-based}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen:4b}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_NUM_THREADS: ${LLM_NUM_THREADS:-0}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
       RETRIEVAL_METHOD: ${RETRIEVAL_METHOD:-auto}
     volumes:
