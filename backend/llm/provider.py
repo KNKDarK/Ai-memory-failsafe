@@ -241,6 +241,7 @@ class LlamaCppLLMProvider:
         self,
         model: str,
         base_url: str = "http://127.0.0.1:8080",
+        api_key: str | None = None,
         timeout: float = 120.0,
         max_tokens: int = 512,
         temperature: float = 0.0,
@@ -253,6 +254,7 @@ class LlamaCppLLMProvider:
             raise ValueError("model is required")
         self._model = model
         self._base_url = base_url.rstrip("/")
+        self._api_key = api_key or None
         self._timeout = timeout
         self._max_tokens = max(1, max_tokens)
         self._temperature = temperature
@@ -267,10 +269,14 @@ class LlamaCppLLMProvider:
         self.last_latency_ms: int | None = None
 
     def _post(self, payload: dict) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            # llama-server started with --api-key requires this on every call.
+            headers["Authorization"] = f"Bearer {self._api_key}"
         with self._concurrency.slot():
             response = requests.post(
                 f"{self._base_url}/v1/chat/completions",
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 json=payload,
                 timeout=self._timeout,
             )
@@ -342,7 +348,10 @@ class LlamaCppLLMProvider:
         try:
             import requests as _requests
 
-            response = _requests.get(f"{self._base_url}/props", timeout=5)
+            headers = {}
+            if self._api_key:
+                headers["Authorization"] = f"Bearer {self._api_key}"
+            response = _requests.get(f"{self._base_url}/props", timeout=5, headers=headers)
             response.raise_for_status()
             props = response.json()
         except Exception:  # noqa: BLE001 - metadata is optional
@@ -370,6 +379,7 @@ def make_llm_provider(settings) -> LLMProvider:
             return LlamaCppLLMProvider(
                 model=settings.llm_model,
                 base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key or None,
                 timeout=settings.llm_timeout_seconds,
                 max_tokens=getattr(settings, "llm_max_tokens", 512),
                 temperature=getattr(settings, "llm_temperature", 0.0),

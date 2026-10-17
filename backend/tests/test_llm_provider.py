@@ -270,3 +270,18 @@ def test_disable_thinking_env_parsing(monkeypatch) -> None:
     assert Settings.from_env().llm_disable_thinking is True
     monkeypatch.delenv("LLM_DISABLE_THINKING")
     assert Settings.from_env().llm_disable_thinking is False
+
+
+def test_llamacpp_sends_bearer_token_when_api_key_configured(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured.update(kwargs)
+        return _FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    LlamaCppLLMProvider(model="t", api_key="s3cret").complete("hi")
+    assert captured["headers"]["Authorization"] == "Bearer s3cret"
+
+    LlamaCppLLMProvider(model="t").complete("hi")
+    assert "Authorization" not in captured["headers"]

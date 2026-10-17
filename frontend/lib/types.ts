@@ -531,3 +531,121 @@ export interface EvaluationReport {
   methodology: Record<string, unknown>;
   limitations: string[];
 }
+
+// --------------------------------------------------------------------------- #
+// LLM evaluation benchmark (real-model runs; see backend/evaluation/llm_benchmark.py)
+// --------------------------------------------------------------------------- #
+
+export type LlmArmMode = "baseline" | "naive" | "memory";
+export type LlmReportStatus = "completed" | "aborted" | "skipped";
+
+export interface LlmRunRow {
+  scenario_id: string;
+  scenario_name: string;
+  category: string;
+  mode: LlmArmMode;
+  repetition: number;
+  success: boolean;
+  final_outcome: string;
+  attempts_used: number;
+  maximum_attempts: number;
+  failures: number;
+  retries: number;
+  steps: number;
+  duration_ms: number;
+  wall_clock_ms?: number;
+  retrieved_ids: string[];
+  selected_ids: string[];
+  applied_ids: string[];
+  llm_suggested_ids: string[];
+  harmful_applied_ids: string[];
+  prevented_failure: boolean;
+  prevention_evidence: string | null;
+  memories_created: string[];
+  memories_reinforced: string[];
+  expectation_met: boolean | null;
+}
+
+export interface LlmScenarioRow {
+  scenario_id: string;
+  name: string;
+  category: string;
+  description: string;
+  simulated: boolean;
+  notes: string;
+  expected: {
+    baseline_success: boolean;
+    memory_success: boolean;
+    prevention_expected: boolean;
+  };
+  prevention_evidence: string | null;
+  repetition_results: Partial<Record<LlmArmMode, LlmRunRow[]>>;
+  baseline?: LlmRunRow | null;
+  naive?: LlmRunRow | null;
+  memory?: LlmRunRow | null;
+}
+
+export interface LlmModelStats {
+  model_calls: number;
+  model_call_errors: number;
+  model_error_samples: string[];
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  avg_latency_ms: number | null;
+  max_latency_ms: number | null;
+  tokens_per_second: number | null;
+}
+
+export interface LlmEvaluationReport {
+  schema_version: number;
+  benchmark_version: string;
+  run_id: string;
+  generated_at: string;
+  status: LlmReportStatus;
+  scenarios_simulated: boolean;
+  model_real: boolean;
+  llm_enabled: boolean;
+  deterministic_fallback: boolean;
+  llm_provider: string;
+  llm_model: string | null;
+  model_info: Record<string, unknown>;
+  settings: Record<string, unknown>;
+  error?: string;
+  scenario_count: number;
+  modes: LlmArmMode[];
+  repetitions: number;
+  scenarios: LlmScenarioRow[];
+  aggregate: Partial<Record<LlmArmMode, AggregateMetrics>> | null;
+  arms: Record<string, unknown> | null;
+  comparison: Record<string, unknown> | null;
+  retrieval_relevance: {
+    application: RelevanceMetrics;
+    selection: RelevanceMetrics;
+  } | null;
+  repetition_variance: Record<
+    string,
+    { success_rate_by_repetition: number[]; success_rate_std: number }
+  > | null;
+  model_stats: LlmModelStats;
+  hardware?: Record<string, unknown>;
+  timing?: Record<string, number>;
+  methodology: Record<string, unknown>;
+  limitations: string[];
+  report_path?: string;
+}
+
+export interface LlmReportSummary {
+  run_id: string;
+  generated_at: string | null;
+  status: LlmReportStatus | null;
+  model_real: boolean;
+  llm_model: string | null;
+  scenario_count: number;
+  filename: string;
+}
+
+export interface LlmEvaluationRequest {
+  scenarios?: string[] | null;
+  repetitions?: number;
+  modes?: LlmArmMode[] | null;
+}

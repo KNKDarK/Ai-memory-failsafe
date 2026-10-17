@@ -6,6 +6,7 @@ import { api, API_BASE, ApiError } from "@/lib/api";
 import type { ConfigResponse, HealthResponse } from "@/lib/types";
 
 import EvaluationPanel from "./EvaluationPanel";
+import LlmEvaluationPanel from "./LlmEvaluationPanel";
 import MemoryPanel from "./MemoryPanel";
 import MetricsHeader from "./MetricsHeader";
 import OverviewPanel from "./OverviewPanel";
@@ -14,7 +15,14 @@ import RunPanel from "./RunPanel";
 import ScenarioPanel from "./ScenarioPanel";
 import { Badge, Spinner } from "./ui";
 
-type TabId = "overview" | "run" | "scenarios" | "retrieval" | "memories" | "evaluation";
+type TabId =
+  | "overview"
+  | "run"
+  | "scenarios"
+  | "retrieval"
+  | "memories"
+  | "evaluation"
+  | "llm";
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -23,6 +31,7 @@ const TABS: Array<{ id: TabId; label: string }> = [
   { id: "retrieval", label: "Retrieval" },
   { id: "memories", label: "Memory Bank" },
   { id: "evaluation", label: "Evaluation" },
+  { id: "llm", label: "LLM Evaluation" },
 ];
 
 export default function Dashboard() {
@@ -127,6 +136,7 @@ export default function Dashboard() {
         {tab === "retrieval" && <RetrievalPanel />}
         {tab === "memories" && <MemoryPanel />}
         {tab === "evaluation" && <EvaluationPanel />}
+        {tab === "llm" && <LlmEvaluationPanel />}
       </main>
 
       <footer className="footer">

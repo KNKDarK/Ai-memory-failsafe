@@ -16,6 +16,9 @@ import type {
   FeedbackVerdict,
   HealthResponse,
   LifecycleSummary,
+  LlmEvaluationReport,
+  LlmEvaluationRequest,
+  LlmReportSummary,
   MemoryDetailResponse,
   MemoryListResponse,
   MemoryMutationResponse,
@@ -160,6 +163,22 @@ export const api = {
     }),
   evaluationReport: () =>
     request<EvaluationReport>("/api/evaluation/report"),
+
+  // LLM evaluation benchmark (requires a configured real LLM provider; the
+  // response honestly reports status "skipped"/"aborted" instead of fabricating
+  // model results when none is available).
+  runLlmEvaluation: (body: LlmEvaluationRequest, signal?: AbortSignal) =>
+    request<LlmEvaluationReport>("/api/evaluation/llm/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  llmReports: () =>
+    request<{ reports: LlmReportSummary[] }>("/api/evaluation/llm/reports"),
+  llmReport: (runId: string) =>
+    request<LlmEvaluationReport>(
+      `/api/evaluation/llm/reports/${encodeURIComponent(runId)}`,
+    ),
 };
 
 export type { FailureMemory };
