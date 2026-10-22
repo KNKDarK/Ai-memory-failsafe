@@ -88,14 +88,17 @@ def test_run_is_skipped_without_real_provider() -> None:
 
 
 def test_run_aborts_when_every_model_call_fails() -> None:
-    benchmark = LLMBenchmark(_settings(), provider=FakeLLMProvider(fail=True))
+    provider = FakeLLMProvider(fail=True)
+    benchmark = LLMBenchmark(_settings(), provider=provider)
 
-    report = benchmark.run(scenario_ids=["missing_dependency_build"])
+    report = benchmark.run(scenario_ids=["missing_dependency_build", "low_confidence_memory"])
 
     assert report["status"] == "aborted"
     assert "model endpoint failed for all" in report["error"]
     assert report["aggregate"] is None
     assert report["model_stats"]["model_call_errors"] > 0
+    # Aborts promptly instead of burning timeouts on the remaining scenarios.
+    assert len(provider.prompts) <= 2
     # Partial per-scenario rows are preserved as evidence of the abort.
     assert report["scenarios"]
 

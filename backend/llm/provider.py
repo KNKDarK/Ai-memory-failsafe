@@ -253,7 +253,9 @@ class LlamaCppLLMProvider:
         if not model:
             raise ValueError("model is required")
         self._model = model
-        self._base_url = base_url.rstrip("/")
+        # Tolerate OpenAI-style base URLs ("…/v1") the same way the Ollama
+        # provider does; the request path appends "/v1/chat/completions".
+        self._base_url = base_url.rstrip("/").removesuffix("/v1")
         self._api_key = api_key or None
         self._timeout = timeout
         self._max_tokens = max(1, max_tokens)

@@ -353,12 +353,26 @@ class LLMBenchmark:
 
         for scenario in scenarios:
             scenario_rows: dict[str, dict] = {}
+            aborted = False
             for repetition in range(1, repetitions + 1):
                 for mode in selected_modes:
                     row = self._run_mode(scenario, mode, repetition)
                     rows[mode].append(row)
                     if repetition == 1:
                         scenario_rows[mode] = row
+                    stats = self._instrumented
+                    if stats.errors and not stats.latencies_ms:
+                        # Every model call so far failed: stop immediately
+                        # instead of burning timeouts on the remaining arms.
+                        first = stats.error_samples[0] if stats.error_samples else "unknown error"
+                        error = (
+                            f"the model endpoint failed for all {stats.errors} call(s); "
+                            f"first failure: {first}"
+                        )
+                        aborted = True
+                        break
+                if aborted:
+                    break
             memory_row = scenario_rows.get("memory")
             if memory_row is not None:
                 probe = self._probe(scenario, memory_row)
@@ -387,15 +401,7 @@ class LLMBenchmark:
                 entry[mode] = scenario_rows.get(mode)
             comparison_rows.append(entry)
 
-            stats = self._instrumented
-            if stats.errors and not stats.latencies_ms:
-                # Every model call so far failed: abort instead of reporting
-                # rule-based behaviour as if it were model behaviour.
-                first = stats.error_samples[0] if stats.error_samples else "unknown error"
-                error = (
-                    f"the model endpoint failed for all {stats.errors} call(s); "
-                    f"first failure: {first}"
-                )
+            if aborted:
                 logger.error("LLM benchmark aborted: %s", error)
                 break
 

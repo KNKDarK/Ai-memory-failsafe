@@ -21,6 +21,9 @@ Because this system processes logs, agent actions, trace data, and vector embedd
 * **Tool Permissions**: Grant AI agents the minimum necessary permissions required for task execution (Principle of Least Privilege).
 * **Input Validation**: Sanitize and validate external inputs and tool execution parameters prior to execution.
 * **Data Privacy in Embeddings**: Ensure sensitive personally identifiable information (PII) or confidential environment details are excluded from semantic embeddings and public vector stores.
+* **Model Server Exposure**: Local inference servers (`llama-server`, Ollama) are unauthenticated by default. Keep them on `127.0.0.1`; if a model server must be reachable by containers or other hosts, start it with `--api-key` (the backend sends `LLM_API_KEY` as a Bearer token) and restrict the port with the host firewall. Never expose a model server to untrusted networks.
+* **Untrusted Memory and Model Output**: Retrieved memory text and LLM output are unvalidated data, never instructions. Model-proposed tools are checked against an allowlist (disallowed tools become `noop`), and the deterministic trust gates — not the model — decide which memories are applied; a model cannot suggest a reviewer-rejected memory into execution.
+* **Benchmark Honesty**: LLM benchmark reports count model-call errors and abort loudly when the endpoint is dead, instead of silently presenting rule-based fallback results as model results. Do not weaken this: masked provider failures are indistinguishable from real model behaviour.
 
 ---
 

@@ -285,3 +285,15 @@ def test_llamacpp_sends_bearer_token_when_api_key_configured(monkeypatch) -> Non
 
     LlamaCppLLMProvider(model="t").complete("hi")
     assert "Authorization" not in captured["headers"]
+
+
+def test_llamacpp_tolerates_openai_style_base_url(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured.update(url=url)
+        return _FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    LlamaCppLLMProvider(model="t", base_url="http://localhost:8080/v1").complete("hi")
+    assert captured["url"] == "http://localhost:8080/v1/chat/completions"

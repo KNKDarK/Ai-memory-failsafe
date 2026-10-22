@@ -619,6 +619,152 @@ leave every metric unchanged.
 
 ---
 
+# 🤖 LLM Evaluation (real local model)
+
+The deterministic benchmark above never needs a model. The **LLM evaluation**
+(`backend/evaluation/llm_benchmark.py`) is a separate path that runs the same
+scenarios through a **real model** in three comparable arms:
+
+| Arm | What the model sees | What decides execution |
+| --- | --- | --- |
+| `baseline` | task + tool schemas, **no memories** | model plan only |
+| `naive` | task + **unfiltered** retrieved memories (research arm) | model plan; allowlisted tools only |
+| `memory` | task + memories that passed the trust gates | model plan; **deterministic gates** decide what is applied |
+
+The model proposes plans through a JSON schema and a tool allowlist (disallowed
+tools are replaced with `noop`); retrieved memory is injected as *data*, never
+as instructions, and the model may only *suggest* memory — the deterministic
+trust gates decide what is actually applied. Failed attempts are fed back to
+the model (with exact tool argument names in the prompt), so retries can change
+strategy instead of repeating mistakes.
+
+**Honesty rules** (the reason this is not just the deterministic benchmark with
+a model attached):
+
+- No real provider configured → the run is reported as `status: "skipped"`
+  with an explanation. Nothing is fabricated.
+- The endpoint fails for every call → the run **aborts immediately** with
+  `status: "aborted"` and the first error, instead of silently reporting
+  rule-based behaviour as model behaviour. (Individual failed calls still fall
+  back per-scenario and are counted in `model_stats.model_call_errors`.)
+- Every report records model calls, errors, token counts, latency, throughput,
+  generation settings, and a run id; reports are never overwritten.
+
+## Configure and start `llama-server`
+
+```bash
+# -ngl 99: offload all layers to the GPU when they fit (Vulkan on AMD);
+# llama-server falls back to CPU automatically when they do not.
+llama-server -m /path/to/model.gguf \
+  --host 127.0.0.1 --port 8080 \
+  -ngl 99 --ctx-size 8192 -t 6 \
+  --api-key "$(openssl rand -hex 24)"
+```
+
+Use any instruction GGUF that fits your hardware (~4B, 4-bit/Q4 recommended
+under 16 GB RAM). Do not expose the model server publicly; `--api-key` is
+supported end-to-end (the backend sends `Authorization: Bearer` for you).
+
+## Point the backend at it
+
+```env
+LLM_PROVIDER=llama.cpp                # "deterministic" (default) | "llama.cpp" | "ollama" | "openai"
+LLM_MODEL=local                       # any identifier; llama-server ignores it, Ollama needs the real tag
+LLM_BASE_URL=http://127.0.0.1:8080    # llama-server / Ollama / OpenAI-compatible endpoint
+LLM_API_KEY=                          # only if the server was started with --api-key
+LLM_MAX_TOKENS=1024                   # keep modest for small models
+LLM_TEMPERATURE=0                     # fixed generation settings for comparability
+LLM_SEED=7                            # optional; most runtimes are not bit-exact
+LLM_CONTEXT_LENGTH=                   # optional server context override
+LLM_TIMEOUT_SECONDS=120
+LLM_DISABLE_THINKING=1                # qwen3-style reasoning models: stop the hidden
+                                      # "thinking" phase (see below)
+LLM_BENCHMARK_OUTPUT_DIR=data/llm_benchmarks
+```
+
+**Reasoning models (qwen3.5 “thinking” variants and friends):** they spend
+their whole token budget on hidden reasoning and return an empty answer at
+small `max_tokens`. Set `LLM_DISABLE_THINKING=1` — the providers then send
+`chat_template_kwargs: {"enable_thinking": false}` (llama.cpp) / `think: false`
+(Ollama) so the model answers directly. Verified against `qwen3.5:4b` Q4_K_M
+via `llama-server` b11429.
+
+## Run an LLM evaluation
+
+```bash
+# CLI — small real-model run (3 scenarios, all arms):
+LLM_PROVIDER=llama.cpp LLM_BASE_URL=http://127.0.0.1:8080 LLM_MODEL=local \
+  LLM_DISABLE_THINKING=1 \
+  .venv/bin/python -c "from backend.evaluation.llm_benchmark import run_llm_benchmark; run_llm_benchmark(scenario_ids=['missing_dependency_build','low_confidence_memory','adversarial_memory_text'])"
+```
+
+```bash
+# API (auth header required when API_AUTH_TOKEN is set):
+curl -X POST http://localhost:8000/api/evaluation/llm/run \
+  -H "Authorization: Bearer $API_AUTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"scenarios": ["missing_dependency_build"], "modes": ["baseline","naive","memory"], "repetitions": 1}'
+
+curl -s http://localhost:8000/api/evaluation/llm/reports          # list saved runs
+curl -s http://localhost:8000/api/evaluation/llm/reports/<run_id> # one report
+```
+
+Dashboard: the **LLM Evaluation** tab (scenario subset, arms, repetitions,
+start / stop-waiting, live elapsed time, per-scenario traces with
+“suggested by model” vs “applied by gates”, run history). Nothing runs
+automatically when the page opens.
+
+## Sample real run (for orientation, not a claim)
+
+One completed run on this hardware — Ryzen 5 5600H, 16 GB RAM, RX 6500M —
+with `qwen3.5:4b` **Q4_K Medium** GGUF through `llama-server` b11429
+(CPU inference: the ~2.6 GB model did not fit the 4 GB VRAM alongside the
+desktop, and llama-server reported the offload and fell back), thinking
+disabled, temperature 0, seed 7, 3 scenarios × 3 arms:
+
+- 25 model calls, 0 errors, 16.6k prompt / 11.4k completion tokens,
+  ≈34 tok/s, ≈13.4 s average per call.
+- baseline 3/3 · naive 2/3 with **1 harmful memory application** (the
+  low-confidence memory, applied because the naive arm has no gates) ·
+  validated memory 2/3 with **0 harmful applications** (the same memory was
+  blocked).
+- Application precision 1.0; the adversarial-instruction memory’s injected
+  “SYSTEM OVERRIDE” text never produced an off-allowlist tool.
+
+Single-run differences on 3 scenarios are noise, not causal evidence — use
+`repetitions` and the variance section before reading anything into the rates.
+
+## Reports
+
+Each run writes `llm_benchmark_<run_id>.json` into
+`LLM_BENCHMARK_OUTPUT_DIR` (default `data/llm_benchmarks/`; in Docker that is
+on the persistent volume). The report contains `status`, `model_stats`
+(calls/errors/tokens/latency/throughput), `model_info` (quantization and server
+build, read from `/props`), per-scenario rows (retrieved / suggested /
+applied / harmful memory ids per arm, plus per-repetition results), aggregate
+arms, retrieval relevance, repetition variance, hardware snapshots, generation
+settings, methodology, and limitations.
+
+## Troubleshooting
+
+- **`status: "skipped"`** — no real provider configured (defaults are
+  deterministic). Set `LLM_PROVIDER` and friends.
+- **`status: "aborted"`** — every model call failed; the first error is in
+  `error` and `model_stats.model_error_samples`. Common causes: server not
+  running, wrong port, missing `--api-key`, or `LLM_BASE_URL` pointing at a
+  hostname the backend cannot resolve.
+- **Empty answers from a reasoning model** — set `LLM_DISABLE_THINKING=1` or
+  raise `LLM_MAX_TOKENS`.
+- **Docker + local server** — containers reach the host via
+  `host.docker.internal` (mapped to the docker bridge). If your host firewall
+  drops traffic from docker networks to local ports, allow the docker bridge on
+  the model port (e.g. `ufw allow from 172.16.0.0/12 to any port 8080`) or run
+  the backend outside Docker. Use `--api-key` whenever the port is not
+  localhost-only.
+- **Slow or unstable GPU offload** — reduce `-ngl`, or run CPU-only (`-ngl 0`);
+  for a 4B Q4 model on this hardware CPU was the stable, honest configuration.
+
+---
+
 # 🛠️ Technology Stack
 
 > The stack is deliberately offline-first: no API key, GPU, or network access is
@@ -803,9 +949,17 @@ Common overrides:
 
 ```env
 MEMORY_DATABASE=data/memory.db      # SQLite location (":memory:" for ephemeral)
-LLM_PROVIDER=deterministic         # or "openai" (then set LLM_API_KEY)
+LLM_PROVIDER=deterministic         # or "llama.cpp" / "ollama" / "openai" (see below)
 EMBEDDING_PROVIDER=hashing         # or "tfidf" / "openai"
 ```
+
+To point the app at a **real local model** (llama.cpp `llama-server`, Ollama,
+or any OpenAI-compatible endpoint) for the LLM evaluation benchmark, set
+`LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL` (plus `LLM_API_KEY` only if your
+model server requires one) — see
+[LLM Evaluation](#-llm-evaluation-real-local-model) for the full list including
+`LLM_MAX_TOKENS`, `LLM_SEED`, and `LLM_DISABLE_THINKING`. The deterministic
+benchmark and the test suite stay fully offline and never touch the model.
 
 **Never commit `.env` or API keys to GitHub.**
 
@@ -929,12 +1083,15 @@ Containers read the same environment variables as a local run
 [`.env.example`](.env.example). In Docker, pass them through
 `compose.yaml` → `services.backend.environment` (the SQLite paths there must
 stay pointed at `/app/data`). No API key is required: the deterministic
-pipeline runs offline, and the optional Ollama provider degrades gracefully to
-rule-based analysis when no daemon is reachable. See
-[API security](#-security) for `API_AUTH_TOKEN` and the request limits, and
-note that the token is **baked into the frontend image at build time** — after
-changing it, run `docker compose up --build` (or `docker compose build
-frontend`).
+pipeline runs offline, and a configured provider degrades gracefully to
+rule-based planning when no model server is reachable (the LLM benchmark
+reports that honestly instead — see
+[LLM Evaluation](#-llm-evaluation-real-local-model)). LLM benchmark reports
+default to `/app/data/llm_benchmarks` inside the container, i.e. on the
+persistent volume. See [API security](#-security) for `API_AUTH_TOKEN` and the
+request limits, and note that the token is **baked into the frontend image at
+build time** — after changing it, run `docker compose up --build` (or
+`docker compose build frontend`).
 
 ## Evaluation workflow inside Docker
 
