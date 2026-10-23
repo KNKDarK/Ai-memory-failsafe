@@ -141,7 +141,9 @@ class FailureMemory(BaseModel):
             raise ValueError("agent_id must be at most 128 characters")
         return text
 
-    @field_validator("evidence", "prevention_actions", "tags", "contributing_agent_ids", "used_by_agent_ids")
+    @field_validator(
+        "evidence", "prevention_actions", "tags", "contributing_agent_ids", "used_by_agent_ids"
+    )
     @classmethod
     def _clean_list(cls, value: list[str]) -> list[str]:
         cleaned: list[str] = []

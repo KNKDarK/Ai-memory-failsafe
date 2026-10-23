@@ -49,9 +49,7 @@ def build_runtime(settings: Settings | None = None, store: MemoryStore | None = 
     embedder = make_embedding_provider(settings)
     strategy_selector = StrategySelector(
         store,
-        exploration=getattr(
-            settings, "retrieval_strategy_exploration", DEFAULT_EXPLORATION
-        ),
+        exploration=getattr(settings, "retrieval_strategy_exploration", DEFAULT_EXPLORATION),
     )
     retriever = MemoryRetriever(
         store,

@@ -577,9 +577,7 @@ class MemoryStore:
             }
             if other_agents:
                 cross_agent_memories += 1
-                cross_agent_reuse += sum(
-                    1 for consumer in consumers if consumer != memory.agent_id
-                )
+                cross_agent_reuse += sum(1 for consumer in consumers if consumer != memory.agent_id)
 
         for agent in agents.values():
             applied = agent["times_applied"]
@@ -663,8 +661,7 @@ class MemoryStore:
         normalized = _strategy_key(task_type)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM retrieval_strategy_stats WHERE task_type = ? "
-                "ORDER BY strategy",
+                "SELECT * FROM retrieval_strategy_stats WHERE task_type = ? ORDER BY strategy",
                 (normalized,),
             ).fetchall()
         return {str(row["strategy"]): self._strategy_row(row) for row in rows}

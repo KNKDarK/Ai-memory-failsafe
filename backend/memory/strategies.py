@@ -106,9 +106,7 @@ class StrategySelector:
                 f"exploration {self.exploration:.2f})"
             ),
             "trials": trials[best],
-            "success_rate": round(
-                int(best_stats.get("successes", 0)) / trials[best], 4
-            ),
+            "success_rate": round(int(best_stats.get("successes", 0)) / trials[best], 4),
             "ucb_score": round(best_score, 4),
             "total_trials": total_trials,
         }

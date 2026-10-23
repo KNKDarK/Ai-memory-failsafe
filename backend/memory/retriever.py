@@ -78,9 +78,7 @@ class MemoryRetriever:
         self.ranker = ranker or MemoryRanker(settings)
         self.strategy_selector = strategy_selector or StrategySelector(
             store,
-            exploration=getattr(
-                settings, "retrieval_strategy_exploration", DEFAULT_EXPLORATION
-            ),
+            exploration=getattr(settings, "retrieval_strategy_exploration", DEFAULT_EXPLORATION),
         )
 
     # ------------------------------------------------------------------ #
@@ -230,9 +228,7 @@ class MemoryRetriever:
                 embedder_available=self.embedder is not None,
             )
             chosen = selection["strategy"]
-            scores, label = method_similarities(
-                chosen, query_text, docs, embedder=self.embedder
-            )
+            scores, label = method_similarities(chosen, query_text, docs, embedder=self.embedder)
             return scores, label, chosen
         if method != "auto":
             try:

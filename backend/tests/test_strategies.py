@@ -92,9 +92,7 @@ def test_adaptive_retriever_reports_and_uses_the_selected_strategy(
     assert results[0].retrieval_mode == "tfidf_fallback"
     assert results[0].selected is True
 
-    retriever.strategy_selector.record(
-        "deploy_service", "tfidf", success=False
-    )
+    retriever.strategy_selector.record("deploy_service", "tfidf", success=False)
     second = retriever.retrieve(
         RetrievalQuery(text="Deploy the application", task_type="deploy_service")
     )

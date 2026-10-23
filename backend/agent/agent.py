@@ -188,8 +188,10 @@ class FailureMemoryAgent:
                 (result.retrieval_strategy for result in retrieved if result.retrieval_strategy),
                 "",
             )
-            if policy.retrieve and retrieval_strategy and any(
-                result.selected for result in retrieved
+            if (
+                policy.retrieve
+                and retrieval_strategy
+                and any(result.selected for result in retrieved)
             ):
                 selection = self.store.record_strategy_outcome(
                     task_type,
@@ -211,9 +213,7 @@ class FailureMemoryAgent:
                 if memory_id not in run.memory_ids_applied:
                     run.memory_ids_applied.append(memory_id)
                 if policy.retrieve:
-                    self.store.record_use(
-                        memory_id, success=record.success, agent_id=agent_id
-                    )
+                    self.store.record_use(memory_id, success=record.success, agent_id=agent_id)
 
             if record.success:
                 run.final_success = True
@@ -251,9 +251,7 @@ class FailureMemoryAgent:
             if policy.learn:
                 analysis = self.analyzer.analyze(record)
                 run.analyses.append(analysis)
-                memory_id, created = self._learn(
-                    analysis, record, task_type, agent_id=agent_id
-                )
+                memory_id, created = self._learn(analysis, record, task_type, agent_id=agent_id)
                 if memory_id:
                     target = run.memory_ids_created if created else run.memory_ids_reinforced
                     if memory_id not in target:
