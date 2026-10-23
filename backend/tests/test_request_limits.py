@@ -240,8 +240,16 @@ def test_pathologically_nested_json_body_is_rejected_cleanly(api_client: TestCli
     response = api_client.post(
         "/api/tasks/run", content=payload, headers={"Content-Type": "application/json"}
     )
-    assert response.status_code == 400
-    assert "parsing the body" in response.json()["detail"]
+    # FastAPI/Pydantic versions differ here: older releases reject the body in
+    # the parser (400, "Error parsing the body"), newer ones surface Pydantic's
+    # json_invalid error directly as a 422. Both are clean client errors, which
+    # is what this test guarantees (never a 500 or a hang).
+    assert response.status_code in (400, 422)
+    detail = response.json()["detail"]
+    if response.status_code == 400:
+        assert "parsing the body" in detail
+    else:
+        assert detail[0]["type"] == "json_invalid"
 
 
 def test_nested_body_past_python_recursion_is_422(api_client: TestClient) -> None:

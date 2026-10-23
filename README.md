@@ -1255,6 +1255,13 @@ pytest -q --cov=backend                      # unit, integration, API, persisten
 ruff check . && ruff format --check .
 ```
 
+Install the local git hooks (ruff lint + format on every commit):
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
 Run a single test file with verbose output:
 
 ```bash
