@@ -1,85 +1,58 @@
 import functools
-import uuid
-from collections.abc import Callable
-
+from typing import Callable, Any, Dict, Optional
 from backend.agent.analyzer import analyze_failure_deterministically
-from backend.memory.models import FailureMemory
 from backend.memory.store import MemoryStore
 
-
 class MemoryGuard:
-    def __init__(self):
-        self.store = MemoryStore()
+    def __init__(self, db_path: str = "data/memory_store.db"):
+        self.store = MemoryStore(db_path=db_path)
 
     def guard_tool(self, task_prompt: str):
+        """Decorator that catches tool failures, extracts failure memories, 
+        and runs pre-flight checks on subsequent executions."""
         def decorator(func: Callable):
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
-                # 1. Retrieve active failure memories
-                try:
-                    memories = self.store.all_active()
-                    for mem in memories:
-                        actions = getattr(mem, "prevention_actions", None)
-                        if actions is None and hasattr(mem, "prevention"):
-                            prev = mem.prevention
-                            actions = getattr(prev, "prevention_actions", None) or getattr(
-                                prev, "actions", []
-                            )
+                # 1. Retrieve prior memories for this task
+                memories = self.store.search_memories(task_prompt)
+                for mem in memories:
+                    actions = mem.get("prevention_actions", [])
+                    for action in actions:
+                        if action.startswith("verify_file_exists:"):
+                            required_path = action.split(":", 1)[1]
+                            print(f"🛡️ [MemoryGuard] Pre-flight active: checking file '{required_path}'...")
 
-                        for action in actions or []:
-                            if action.startswith("verify_file_exists:"):
-                                required_path = action.split(":", 1)[1]
-                                print(
-                                    f"🛡️ [MemoryGuard] Pre-flight active: checking file '{required_path}'..."
-                                )
-                except Exception as search_err:
-                    print(f"⚠️ [MemoryGuard] Search notice: {search_err}")
-
-                # 2. Execute target function
+                # 2. Execute tool
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
                     print(f"⚠️ [MemoryGuard] Caught failure in '{func.__name__}': {e}")
-
+                    
+                    # 3. Build payload & analyze failure
                     payload = {
                         "original_task": task_prompt,
                         "tool_executed": func.__name__,
                         "tool_arguments": kwargs,
                         "error_details": {
                             "error_code": getattr(e, "errno", type(e).__name__),
-                            "message": str(e),
-                        },
+                            "message": str(e)
+                        }
                     }
-
+                    
                     analysis = analyze_failure_deterministically(payload)
-
-                    # 3. Build dictionary matching FailureMemory fields
-                    mem_dict = {
-                        "id": f"mem_{uuid.uuid4().hex[:8]}",
-                        "task": task_prompt,
-                        "failure": f"{analysis.fault_category}: {analysis.root_cause}",
-                        "fault_category": analysis.fault_category,
-                        "root_cause": analysis.root_cause,
-                        "lesson": analysis.lesson,
-                        "prevention": analysis.prevention_strategy,
-                        "prevention_strategy": analysis.prevention_strategy,
-                        "prevention_actions": analysis.prevention_actions,
-                        "confidence": analysis.confidence,
-                    }
-
-                    # Filter keys to match model fields
-                    valid_keys = set(FailureMemory.model_fields.keys())
-                    filtered_dict = {k: v for k, v in mem_dict.items() if k in valid_keys}
-
-                    try:
-                        mem_obj = FailureMemory.model_validate(filtered_dict)
-                        saved_mem, _ = self.store.merge_or_store(mem_obj)
-                        print(f"✅ [MemoryGuard] Persisted failure memory (ID: {saved_mem.id})")
-                    except Exception as store_err:
-                        print(f"⚠️ [MemoryGuard] Store error: {store_err}")
-
+                    
+                    # 4. Save memory to SQLite store
+                    memory_id = self.store.add_memory(
+                        task_prompt=task_prompt,
+                        fault_category=analysis.fault_category,
+                        root_cause=analysis.root_cause,
+                        lesson=analysis.lesson,
+                        prevention_strategy=analysis.prevention_strategy,
+                        prevention_actions=analysis.prevention_actions,
+                        confidence=analysis.confidence
+                    )
+                    print(f"✅ [MemoryGuard] Persisted failure memory (ID: {memory_id})")
                     raise e
 
             return wrapper
-
         return decorator
