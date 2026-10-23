@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS failure_memories (
     failure_count INTEGER NOT NULL DEFAULT 0,
     helpful_count INTEGER NOT NULL DEFAULT 0,
     unhelpful_count INTEGER NOT NULL DEFAULT 0,
+    agent_id TEXT NOT NULL DEFAULT 'default',
+    contributing_agents TEXT NOT NULL DEFAULT '[]',
+    used_by_agents TEXT NOT NULL DEFAULT '[]',
+    shared INTEGER NOT NULL DEFAULT 1,
     source_execution_id TEXT,
     dedup_key TEXT,
     created_at TEXT NOT NULL,
@@ -61,6 +65,7 @@ CREATE TABLE IF NOT EXISTS failure_memories (
 CREATE INDEX IF NOT EXISTS idx_memories_task_type ON failure_memories(task_type);
 CREATE INDEX IF NOT EXISTS idx_memories_dedup ON failure_memories(dedup_key);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON failure_memories(status);
+CREATE INDEX IF NOT EXISTS idx_memories_agent ON failure_memories(agent_id);
 
 CREATE TABLE IF NOT EXISTS memory_feedback (
     id TEXT PRIMARY KEY,
@@ -79,7 +84,28 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Automatic retrieval-strategy selection: one row per (task_type, strategy).
+-- Statistics are shared by all agents so experiments are not repeated in
+-- isolation; the originating agent is kept for auditability.
+CREATE TABLE IF NOT EXISTS retrieval_strategy_stats (
+    task_type TEXT NOT NULL,
+    strategy TEXT NOT NULL,
+    trials INTEGER NOT NULL DEFAULT 0,
+    successes INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_agent_id TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (task_type, strategy)
+);
 """
+
+_MIGRATION_COLUMNS: dict[str, str] = {
+    "agent_id": "TEXT NOT NULL DEFAULT 'default'",
+    "contributing_agents": "TEXT NOT NULL DEFAULT '[]'",
+    "used_by_agents": "TEXT NOT NULL DEFAULT '[]'",
+    "shared": "INTEGER NOT NULL DEFAULT 1",
+}
 
 
 def normalize_text(text: str) -> str:
@@ -87,6 +113,11 @@ def normalize_text(text: str) -> str:
     lowered = (text or "").lower().strip()
     lowered = _PUNCT_RE.sub(" ", lowered)
     return _WS_RE.sub(" ", lowered).strip()
+
+
+def _strategy_key(value: str | None) -> str:
+    """Canonical key for strategy statistics (preserves ``task_type`` shape)."""
+    return (value or "").strip().lower() or "generic"
 
 
 def dedup_key(task_type: str, action: str, failure_category: str, root_cause: str) -> str:
@@ -111,11 +142,28 @@ class MemoryStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
             )
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Additive, idempotent migration for databases created before v2.
+
+        SQLite's ``CREATE TABLE IF NOT EXISTS`` cannot add columns to an
+        existing table, so older databases are upgraded in place. Existing rows
+        keep working: they become memories from the ``default`` agent and stay
+        shared, which matches the pre-cross-agent behaviour.
+        """
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(failure_memories)").fetchall()
+        }
+        for name, ddl in _MIGRATION_COLUMNS.items():
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE failure_memories ADD COLUMN {name} {ddl}")
 
     # ------------------------------------------------------------------ #
     # Serialisation helpers
@@ -149,6 +197,10 @@ class MemoryStore:
             memory.failure_count,
             memory.helpful_count,
             memory.unhelpful_count,
+            memory.agent_id,
+            MemoryStore._json(memory.contributing_agent_ids),
+            MemoryStore._json(memory.used_by_agent_ids),
+            1 if memory.shared else 0,
             memory.source_execution_id,
             dedup_key(
                 memory.task_type,
@@ -183,6 +235,9 @@ class MemoryStore:
         data["evidence"] = cls._safe_json_list(data.get("evidence"))
         data["prevention_actions"] = cls._safe_json_list(data.get("prevention_actions"))
         data["tags"] = cls._safe_json_list(data.get("tags"))
+        data["contributing_agent_ids"] = cls._safe_json_list(data.pop("contributing_agents", None))
+        data["used_by_agent_ids"] = cls._safe_json_list(data.pop("used_by_agents", None))
+        data["shared"] = bool(data.get("shared", 1))
         for nullable in ("last_used_at", "source_execution_id"):
             if data.get(nullable) in ("", None):
                 data[nullable] = None
@@ -207,8 +262,9 @@ class MemoryStore:
             "id, schema_version, task, task_type, action, failure, failure_category, "
             "root_cause, cause_status, evidence, lesson, prevention, prevention_actions, "
             "tags, confidence, status, occurrence_count, use_count, success_count, "
-            "failure_count, helpful_count, unhelpful_count, source_execution_id, "
-            "dedup_key, created_at, updated_at, last_used_at"
+            "failure_count, helpful_count, unhelpful_count, agent_id, contributing_agents, "
+            "used_by_agents, shared, source_execution_id, dedup_key, created_at, updated_at, "
+            "last_used_at"
         )
         placeholders = ", ".join(["?"] * len(row))
         with self._lock:
@@ -241,6 +297,9 @@ class MemoryStore:
             if existing is None:
                 return self.save(memory), True
 
+            new_contributors = (
+                [memory.agent_id] if memory.agent_id != existing.agent_id else []
+            ) + list(memory.contributing_agent_ids)
             merged = existing.model_copy(
                 update={
                     "occurrence_count": existing.occurrence_count + 1,
@@ -252,6 +311,14 @@ class MemoryStore:
                         if memory.cause_status == existing.cause_status
                         else existing.cause_status
                     ),
+                    "contributing_agent_ids": _union(
+                        existing.contributing_agent_ids, new_contributors
+                    ),
+                    "used_by_agent_ids": _union(
+                        existing.used_by_agent_ids, memory.used_by_agent_ids
+                    ),
+                    # A lesson stays shared if any observation was shareable.
+                    "shared": existing.shared or memory.shared,
                     "updated_at": utcnow(),
                 }
             )
@@ -269,18 +336,31 @@ class MemoryStore:
             return self.save(merged), False
 
     def record_use(
-        self, memory_id: str, *, success: bool, applied: bool = True
+        self,
+        memory_id: str,
+        *,
+        success: bool,
+        applied: bool = True,
+        agent_id: str | None = None,
     ) -> FailureMemory | None:
-        """Update usage statistics after a memory was (or was not) applied."""
+        """Update usage statistics after a memory was (or was not) applied.
+
+        ``agent_id`` records cross-agent reuse: an agent other than the origin
+        can be proven to have consumed the lesson.
+        """
         with self._lock:
             memory = self.get(memory_id)
             if memory is None:
                 return None
+            used_by = list(memory.used_by_agent_ids)
+            if agent_id and agent_id not in used_by:
+                used_by.append(agent_id)
             updated = memory.model_copy(
                 update={
                     "use_count": memory.use_count + 1,
                     "success_count": memory.success_count + (1 if success else 0),
                     "failure_count": memory.failure_count + (0 if success else 1),
+                    "used_by_agent_ids": used_by,
                     "last_used_at": utcnow(),
                     "updated_at": utcnow(),
                 }
@@ -366,6 +446,8 @@ class MemoryStore:
         *,
         status: MemoryStatus | None = None,
         task_type: str | None = None,
+        agent_id: str | None = None,
+        shared: bool | None = None,
         limit: int | None = None,
         offset: int = 0,
         include_inactive: bool = True,
@@ -381,6 +463,12 @@ class MemoryStore:
         if task_type:
             clauses.append("task_type = ?")
             params.append(task_type)
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if shared is not None:
+            clauses.append("shared = ?")
+            params.append(1 if shared else 0)
         query = "SELECT * FROM failure_memories"
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
@@ -417,6 +505,8 @@ class MemoryStore:
         *,
         status: MemoryStatus | None = None,
         task_type: str | None = None,
+        agent_id: str | None = None,
+        shared: bool | None = None,
         include_inactive: bool = True,
     ) -> int:
         clauses: list[str] = []
@@ -430,12 +520,182 @@ class MemoryStore:
         if task_type:
             clauses.append("task_type = ?")
             params.append(task_type)
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if shared is not None:
+            clauses.append("shared = ?")
+            params.append(1 if shared else 0)
         query = "SELECT COUNT(*) AS n FROM failure_memories"
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         with self._lock:
             row = self._conn.execute(query, params).fetchone()
         return int(row["n"]) if row else 0
+
+    def agent_stats(self) -> dict:
+        """Per-agent provenance plus cross-agent sharing/reuse counters."""
+        memories = self.list(include_inactive=True)
+        agents: dict[str, dict] = {}
+
+        def entry(agent_id: str) -> dict:
+            return agents.setdefault(
+                agent_id,
+                {
+                    "agent_id": agent_id,
+                    "memories_created": 0,
+                    "memories_reinforced": 0,
+                    "memories_used": 0,
+                    "shared_memories_created": 0,
+                    "total_occurrences": 0,
+                    "times_applied": 0,
+                    "prevention_successes": 0,
+                    "prevention_failures": 0,
+                },
+            )
+
+        cross_agent_memories = 0
+        cross_agent_reuse = 0
+        for memory in memories:
+            created = entry(memory.agent_id)
+            created["memories_created"] += 1
+            created["total_occurrences"] += memory.occurrence_count
+            created["times_applied"] += memory.use_count
+            created["prevention_successes"] += memory.success_count
+            created["prevention_failures"] += memory.failure_count
+            if memory.shared:
+                created["shared_memories_created"] += 1
+            for contributor in memory.contributing_agent_ids:
+                entry(contributor)["memories_reinforced"] += 1
+            consumers = set(memory.used_by_agent_ids)
+            for consumer in consumers:
+                entry(consumer)["memories_used"] += 1
+            other_agents = {
+                agent
+                for agent in set(memory.contributing_agent_ids) | consumers
+                if agent != memory.agent_id
+            }
+            if other_agents:
+                cross_agent_memories += 1
+                cross_agent_reuse += sum(
+                    1 for consumer in consumers if consumer != memory.agent_id
+                )
+
+        for agent in agents.values():
+            applied = agent["times_applied"]
+            agent["prevention_success_rate"] = (
+                round(agent["prevention_successes"] / applied, 4) if applied else None
+            )
+
+        return {
+            "agents": sorted(agents.values(), key=lambda item: item["agent_id"]),
+            "total_agents": len(agents),
+            "total_memories": len(memories),
+            "shared_memories": sum(1 for memory in memories if memory.shared),
+            "cross_agent_memories": cross_agent_memories,
+            "cross_agent_reuse_events": cross_agent_reuse,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Automatic retrieval-strategy statistics
+    # ------------------------------------------------------------------ #
+    def record_strategy_outcome(
+        self,
+        task_type: str,
+        strategy: str,
+        *,
+        success: bool,
+        agent_id: str | None = None,
+    ) -> dict:
+        """Record one observed outcome for a (task type, strategy) pair."""
+        task_type = _strategy_key(task_type)
+        strategy = _strategy_key(strategy)
+        if not strategy:
+            raise ValueError("strategy must not be blank")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT trials, successes, failures FROM retrieval_strategy_stats "
+                "WHERE task_type = ? AND strategy = ?",
+                (task_type, strategy),
+            ).fetchone()
+            trials = int(row["trials"]) if row else 0
+            successes = int(row["successes"]) if row else 0
+            failures = int(row["failures"]) if row else 0
+            trials += 1
+            if success:
+                successes += 1
+            else:
+                failures += 1
+            self._conn.execute(
+                "INSERT OR REPLACE INTO retrieval_strategy_stats "
+                "(task_type, strategy, trials, successes, failures, last_agent_id, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    task_type,
+                    strategy,
+                    trials,
+                    successes,
+                    failures,
+                    agent_id,
+                    utcnow().isoformat(),
+                ),
+            )
+            self._conn.commit()
+        return {
+            "task_type": task_type,
+            "strategy": strategy,
+            "trials": trials,
+            "successes": successes,
+            "failures": failures,
+            "success_rate": round(successes / trials, 4) if trials else 0.0,
+        }
+
+    def strategy_stats(self) -> list[dict]:
+        """All recorded strategy outcomes, ordered deterministically."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM retrieval_strategy_stats ORDER BY task_type, strategy"
+            ).fetchall()
+        return [self._strategy_row(row) for row in rows]
+
+    def strategy_stats_for(self, task_type: str) -> dict[str, dict]:
+        """Strategy statistics for one task type, keyed by strategy name."""
+        normalized = _strategy_key(task_type)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM retrieval_strategy_stats WHERE task_type = ? "
+                "ORDER BY strategy",
+                (normalized,),
+            ).fetchall()
+        return {str(row["strategy"]): self._strategy_row(row) for row in rows}
+
+    def reset_strategy_stats(self, task_type: str | None = None) -> int:
+        """Delete recorded strategy outcomes (all, or one task type)."""
+        with self._lock:
+            if task_type:
+                cursor = self._conn.execute(
+                    "DELETE FROM retrieval_strategy_stats WHERE task_type = ?",
+                    (_strategy_key(task_type),),
+                )
+            else:
+                cursor = self._conn.execute("DELETE FROM retrieval_strategy_stats")
+            self._conn.commit()
+        return cursor.rowcount
+
+    @staticmethod
+    def _strategy_row(row: sqlite3.Row) -> dict:
+        trials = int(row["trials"])
+        successes = int(row["successes"])
+        return {
+            "task_type": str(row["task_type"]),
+            "strategy": str(row["strategy"]),
+            "trials": trials,
+            "successes": successes,
+            "failures": int(row["failures"]),
+            "success_rate": round(successes / trials, 4) if trials else 0.0,
+            "last_agent_id": row["last_agent_id"],
+            "updated_at": row["updated_at"],
+        }
 
     def stats(self) -> dict:
         """Aggregate counters for dashboards and the evaluation report."""
@@ -455,6 +715,7 @@ class MemoryStore:
         applied = sum(m.use_count for m in memories)
         successes = sum(m.success_count for m in memories)
         failures = sum(m.failure_count for m in memories)
+        agent_summary = self.agent_stats()
         return {
             "total_memories": len(memories),
             "by_status": by_status,
@@ -465,6 +726,11 @@ class MemoryStore:
             "prevention_successes": successes,
             "prevention_failures": failures,
             "prevention_success_rate": (successes / applied) if applied else None,
+            "agents": agent_summary["agents"],
+            "total_agents": agent_summary["total_agents"],
+            "shared_memories": agent_summary["shared_memories"],
+            "cross_agent_memories": agent_summary["cross_agent_memories"],
+            "cross_agent_reuse_events": agent_summary["cross_agent_reuse_events"],
         }
 
     def malformed_row_count(self) -> int:

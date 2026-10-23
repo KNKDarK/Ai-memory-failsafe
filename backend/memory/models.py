@@ -22,7 +22,7 @@ from backend.domain import (
     utcnow,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _STATUS_PENALTY: dict[MemoryStatus, float] = {
     MemoryStatus.ACTIVE: 1.0,
@@ -98,6 +98,16 @@ class FailureMemory(BaseModel):
     helpful_count: int = 0
     unhelpful_count: int = 0
 
+    # --- Provenance / cross-agent sharing -------------------------------
+    # ``agent_id`` is the agent that first learned the lesson. Contributing
+    # agents independently reinforced the same lesson, and used-by agents
+    # successfully or unsuccessfully applied it. ``shared`` controls whether
+    # *other* agents may retrieve it (it is always visible to its origin).
+    agent_id: str = "default"
+    contributing_agent_ids: list[str] = Field(default_factory=list)
+    used_by_agent_ids: list[str] = Field(default_factory=list)
+    shared: bool = True
+
     # --- Provenance / lifecycle -----------------------------------------
     source_execution_id: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
@@ -121,7 +131,17 @@ class FailureMemory(BaseModel):
     def _valid_confidence(cls, value: float) -> float:
         return _clamp(float(value))
 
-    @field_validator("evidence", "prevention_actions", "tags")
+    @field_validator("agent_id")
+    @classmethod
+    def _clean_agent_id(cls, value: str) -> str:
+        text = (value or "").strip()
+        if not text:
+            return "default"
+        if len(text) > 128:
+            raise ValueError("agent_id must be at most 128 characters")
+        return text
+
+    @field_validator("evidence", "prevention_actions", "tags", "contributing_agent_ids", "used_by_agent_ids")
     @classmethod
     def _clean_list(cls, value: list[str]) -> list[str]:
         cleaned: list[str] = []
@@ -180,6 +200,11 @@ class RetrievalQuery(BaseModel):
     limit: int = 5
     min_score: float = 0.0
     include_inactive: bool = False
+    # Cross-agent learning scope. ``agent_id`` identifies the requesting agent;
+    # ``cross_agent`` allows verified memories shared by other agents. With no
+    # agent id the retriever keeps its historical store-wide behaviour.
+    agent_id: str | None = None
+    cross_agent: bool = True
 
 
 class RetrievalComponents(BaseModel):
@@ -207,6 +232,9 @@ class RetrievalResult(BaseModel):
     matched_terms: list[str] = Field(default_factory=list)
     selected: bool = True
     reason: str = ""
+    # Set when automatic strategy selection (``RETRIEVAL_METHOD=adaptive``)
+    # chose the similarity method for this query. Empty for explicit methods.
+    retrieval_strategy: str = ""
     retrieval_mode: Literal[
         "hashing_embedding",
         "tfidf_fallback",

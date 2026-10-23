@@ -42,6 +42,7 @@ def retrieval_dict(result: RetrievalResult, redactor: SecretRedactor) -> dict[st
         "selected": result.selected,
         "reason": redactor.redact(result.reason),
         "retrieval_mode": result.retrieval_mode,
+        "retrieval_strategy": result.retrieval_strategy,
     }
 
 

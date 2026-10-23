@@ -30,6 +30,7 @@ from backend.memory.models import (
 from backend.memory.ranking import MemoryRanker
 from backend.memory.similarity import method_similarities
 from backend.memory.store import MemoryStore, normalize_text
+from backend.memory.strategies import DEFAULT_EXPLORATION, StrategySelector
 
 
 def memory_document(memory: FailureMemory) -> str:
@@ -69,11 +70,18 @@ class MemoryRetriever:
         *,
         embedder: EmbeddingProvider | None = None,
         ranker: MemoryRanker | None = None,
+        strategy_selector: StrategySelector | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
         self.embedder = embedder
         self.ranker = ranker or MemoryRanker(settings)
+        self.strategy_selector = strategy_selector or StrategySelector(
+            store,
+            exploration=getattr(
+                settings, "retrieval_strategy_exploration", DEFAULT_EXPLORATION
+            ),
+        )
 
     # ------------------------------------------------------------------ #
     def retrieve(
@@ -95,11 +103,16 @@ class MemoryRetriever:
         # Filter out statuses that must never be surfaced by default.
         if not query.include_inactive:
             candidates = [m for m in candidates if m.status == MemoryStatus.ACTIVE]
+        # Cross-agent scope: own/shared lessons only when a requesting agent is
+        # identified. No agent id preserves the historical store-wide view.
+        candidates = self._cross_agent_candidates(candidates, query)
         if not candidates:
             return []
 
         q_text = query_document(query)
-        similarities, mode = self._similarities(q_text, candidates)
+        similarities, mode, strategy = self._similarities(
+            q_text, candidates, task_type=query.task_type
+        )
         q_terms = set(tokenize(q_text))
         min_similarity = getattr(self.settings, "retrieval_min_similarity", 0.0)
 
@@ -115,6 +128,8 @@ class MemoryRetriever:
             seen: set[str] = set()
             matched_terms = [t for t in matched if not (t in seen or seen.add(t))][:12]
             reason = self.ranker.explain(memory, components, matched_terms, mode)
+            if strategy:
+                reason = f"adaptive strategy {strategy}; {reason}"
             # Two gates: an overall score floor *and* a text-similarity floor.
             # The second stops a confident but textually unrelated memory from
             # being surfaced on the strength of confidence/recency alone.
@@ -134,6 +149,7 @@ class MemoryRetriever:
                     matched_terms=matched_terms,
                     selected=selected,
                     reason=reason,
+                    retrieval_strategy=strategy,
                     retrieval_mode=mode,
                 )
             )
@@ -160,14 +176,70 @@ class MemoryRetriever:
         return results[:limit]
 
     # ------------------------------------------------------------------ #
+    def _cross_agent_candidates(
+        self, memories: list[FailureMemory], query: RetrievalQuery
+    ) -> list[FailureMemory]:
+        """Apply the requesting agent's visibility rules.
+
+        * Own lessons are always visible (created, reinforced, or previously
+          used by the agent).
+        * Other agents' lessons require ``shared=True``, an enabled
+          cross-agent policy, and enough effective confidence to count as
+          *verified*. This prevents a single low-trust observation from
+          leaking across agents.
+        """
+        agent_id = (query.agent_id or "").strip()
+        if not agent_id:
+            return memories
+        share_enabled = bool(getattr(self.settings, "cross_agent_learning", True))
+        min_confidence = float(getattr(self.settings, "cross_agent_min_confidence", 0.55))
+
+        def visible(memory: FailureMemory) -> bool:
+            if (
+                memory.agent_id == agent_id
+                or agent_id in memory.contributing_agent_ids
+                or agent_id in memory.used_by_agent_ids
+            ):
+                return True
+            if not query.cross_agent or not share_enabled or not memory.shared:
+                return False
+            return memory.effective_confidence >= min_confidence
+
+        return [memory for memory in memories if visible(memory)]
+
+    # ------------------------------------------------------------------ #
     def _similarities(
-        self, query_text: str, memories: list[FailureMemory]
-    ) -> tuple[list[float], str]:
+        self,
+        query_text: str,
+        memories: list[FailureMemory],
+        *,
+        task_type: str | None = None,
+    ) -> tuple[list[float], str, str]:
+        """Return ``(scores, mode_label, adaptive_strategy)``.
+
+        The third value is non-empty only when automatic strategy selection
+        chose the method; callers use it to feed the outcome back into the
+        bandit. Explicit and ``auto`` methods always report an empty strategy
+        so they are never accidentally recorded as an experiment.
+        """
         docs = [memory_document(m) for m in memories]
         method = (getattr(self.settings, "retrieval_method", "auto") or "auto").lower()
+        if method == "adaptive":
+            selection = self.strategy_selector.choose(
+                task_type or "generic",
+                embedder_available=self.embedder is not None,
+            )
+            chosen = selection["strategy"]
+            scores, label = method_similarities(
+                chosen, query_text, docs, embedder=self.embedder
+            )
+            return scores, label, chosen
         if method != "auto":
             try:
-                return method_similarities(method, query_text, docs, embedder=self.embedder)
+                scores, label = method_similarities(
+                    method, query_text, docs, embedder=self.embedder
+                )
+                return scores, label, ""
             except ValueError:
                 # Unknown method configured; fall back to the default routing so a
                 # typo can never disable retrieval entirely.
@@ -182,11 +254,11 @@ class MemoryRetriever:
                     if self.embedder.name.startswith("openai")
                     else "hashing_embedding"
                 )
-                return sims, mode
+                return sims, mode, ""
             except Exception:  # pragma: no cover - network/provider failure path
                 # Any provider failure degrades to the deterministic fallback.
                 pass
-        return tfidf_similarities(query_text, docs), "tfidf_fallback"
+        return tfidf_similarities(query_text, docs), "tfidf_fallback", ""
 
     # ------------------------------------------------------------------ #
     def _suppress_contradictions(self, results: list[RetrievalResult]) -> list[RetrievalResult]:

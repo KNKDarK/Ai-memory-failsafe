@@ -85,9 +85,12 @@ class Settings:
     # --- Retrieval / ranking --------------------------------------------
     retrieval_limit: int = 5
     # Similarity method: "auto" (historical default: embedding if available, else
-    # TF-IDF) or an explicit method for the retrieval comparison study:
+    # TF-IDF), "adaptive" (automatically experiment across the retrieval methods
+    # and exploit the best one per task type), or an explicit method:
     # "tfidf" | "bm25" | "embedding" | "hybrid".
     retrieval_method: str = "auto"
+    # Exploration strength for the adaptive bandit (0 = exploit only).
+    retrieval_strategy_exploration: float = 0.35
     retrieval_min_score: float = 0.28
     # A memory must also clear this *text similarity* floor to be selected, so a
     # high-confidence but textually unrelated memory can never be surfaced by
@@ -101,6 +104,13 @@ class Settings:
     # A memory must reach this "effective confidence" before its prevention is
     # allowed to change the agent's plan.
     min_confidence_to_apply: float = 0.55
+
+    # --- Cross-agent learning ---------------------------------------------
+    # Verified lessons can be retrieved by other agents when shared=True.
+    cross_agent_learning: bool = True
+    # Other agents' memories must clear this effective-confidence floor to be
+    # treated as verified and cross the sharing boundary.
+    cross_agent_min_confidence: float = 0.55
 
     # --- Memory lifecycle -------------------------------------------------
     # Deterministic freshness/staleness/obsolescence/retirement thresholds.
@@ -168,6 +178,7 @@ class Settings:
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
             retrieval_limit=_env_int("RETRIEVAL_LIMIT", 5),
             retrieval_method=(os.getenv("RETRIEVAL_METHOD", "auto").strip().lower()),
+            retrieval_strategy_exploration=_env_float("RETRIEVAL_STRATEGY_EXPLORATION", 0.35),
             retrieval_min_score=_env_float("RETRIEVAL_MIN_SCORE", 0.28),
             retrieval_min_similarity=_env_float("RETRIEVAL_MIN_SIMILARITY", 0.08),
             weight_similarity=_env_float("WEIGHT_SIMILARITY", 0.62),
@@ -176,6 +187,8 @@ class Settings:
             weight_feedback=_env_float("WEIGHT_FEEDBACK", 0.08),
             recency_half_life_days=_env_float("RECENCY_HALF_LIFE_DAYS", 30.0),
             min_confidence_to_apply=_env_float("MIN_CONFIDENCE_TO_APPLY", 0.55),
+            cross_agent_learning=_env_bool("CROSS_AGENT_LEARNING", True),
+            cross_agent_min_confidence=_env_float("CROSS_AGENT_MIN_CONFIDENCE", 0.55),
             lifecycle_stale_after_days=_env_float("LIFECYCLE_STALE_AFTER_DAYS", 30.0),
             lifecycle_retire_after_days=_env_float("LIFECYCLE_RETIRE_AFTER_DAYS", 90.0),
             lifecycle_obsolete_failure_ratio=_env_float("LIFECYCLE_OBSOLETE_FAILURE_RATIO", 0.5),

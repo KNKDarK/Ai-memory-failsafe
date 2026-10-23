@@ -124,6 +124,7 @@ class TaskRun(BaseModel):
     task: str
     task_type: str = "generic"
     mode: ExecutionMode = "baseline"
+    agent_id: str = "default"
     environment_id: str = "default"
     max_attempts: int = 1
     attempts: list[ExecutionRecord] = Field(default_factory=list)
@@ -138,6 +139,8 @@ class TaskRun(BaseModel):
     # applied (``memory_ids_applied``); comparing the two is part of the
     # LLM benchmark's analysis.
     llm_suggested_memory_ids: list[str] = Field(default_factory=list)
+    # Per-attempt automatic retrieval-strategy outcomes (adaptive mode only).
+    strategy_selections: list[dict[str, Any]] = Field(default_factory=list)
     prevented_failure: bool = False
     prevention_evidence: str = ""
     analyses: list[FailureAnalysis] = Field(default_factory=list)

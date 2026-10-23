@@ -17,6 +17,7 @@ from backend.memory.embedding import EmbeddingProvider, make_embedding_provider
 from backend.memory.ranking import MemoryRanker
 from backend.memory.retriever import MemoryRetriever
 from backend.memory.store import MemoryStore
+from backend.memory.strategies import DEFAULT_EXPLORATION, StrategySelector
 
 
 @dataclass
@@ -25,6 +26,7 @@ class Runtime:
     store: MemoryStore
     embedder: EmbeddingProvider | None
     retriever: MemoryRetriever
+    strategy_selector: StrategySelector
     analyzer: FailureAnalyzer
     planner: TaskPlanner
     executor: AgentExecutor
@@ -45,17 +47,25 @@ def build_runtime(settings: Settings | None = None, store: MemoryStore | None = 
     settings.ensure_data_dir()
     store = store or MemoryStore(settings.memory_database)
     embedder = make_embedding_provider(settings)
+    strategy_selector = StrategySelector(
+        store,
+        exploration=getattr(
+            settings, "retrieval_strategy_exploration", DEFAULT_EXPLORATION
+        ),
+    )
     retriever = MemoryRetriever(
         store,
         settings,
         embedder=embedder,
         ranker=MemoryRanker(settings),
+        strategy_selector=strategy_selector,
     )
     return Runtime(
         settings=settings,
         store=store,
         embedder=embedder,
         retriever=retriever,
+        strategy_selector=strategy_selector,
         analyzer=FailureAnalyzer(settings),
         planner=TaskPlanner(),
         executor=AgentExecutor(settings),

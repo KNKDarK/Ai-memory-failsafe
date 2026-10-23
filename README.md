@@ -329,6 +329,77 @@ This helps distinguish useful lessons from unreliable ones.
 
 ---
 
+## 🤝 Cross-Agent Learning
+
+Failure lessons are shared experience, not agent-local state. Every memory
+records its **originating agent**, the agents that **independently reinforced**
+it, and the agents that **applied** it. A different agent can then retrieve and
+reuse the lesson, closing the loop across the whole fleet:
+
+```text
+Agent A → Failure → Shared Memory → Agent B → Avoids the same failure
+```
+
+Sharing is deliberately gated rather than automatic:
+
+- a memory is visible to its origin (and to agents that reinforced or used it);
+- other agents see it only when `shared=True` **and** its
+  `effective_confidence` clears `CROSS_AGENT_MIN_CONFIDENCE` (verified lesson);
+- the normal retrieval/application gates still apply, so a shared lesson must
+  also be relevant and trustworthy for the receiving agent.
+
+```bash
+# Agent A learns from a failure; Agent B reuses the lesson on a fresh environment
+curl -X POST http://localhost:8000/api/tasks/cross-agent \
+  -H "Content-Type: application/json" \
+  -d '{"task":"Build the project","learner_agent_id":"agent-a","consumer_agent_id":"agent-b"}'
+
+curl -s http://localhost:8000/api/agents                 # per-agent + reuse stats
+curl -s http://localhost:8000/api/agents/agent-b         # one agent's lessons
+curl -s "http://localhost:8000/api/memories?agent_id=agent-a"
+```
+
+Any task run accepts an `agent_id` (default `default`). Disable cross-agent
+retrieval with `CROSS_AGENT_LEARNING=false`; set the verification floor with
+`CROSS_AGENT_MIN_CONFIDENCE`.
+
+---
+
+## 🧪 Automatic Strategy Selection
+
+Retrieval no longer has to be pinned to one text-similarity method. Set
+`RETRIEVAL_METHOD=adaptive` and the retriever runs a deterministic **UCB1
+multi-armed bandit** over the available methods (`tfidf`, `bm25`, `embedding`,
+`hybrid`):
+
+1. every strategy is tried at least once per task type;
+2. after that, the method with the best observed success rate, adjusted for
+   uncertainty, is selected;
+3. the outcome of each adaptive retrieval attempt (did applying the retrieved
+   memory lead to success?) is persisted per `(task_type, strategy)`;
+4. statistics are shared across agents, so an experiment run by one agent
+   benefits the others.
+
+Ties are broken by a fixed candidate order, never randomness, so runs remain
+reproducible. When no embedder is configured, `embedding`/`hybrid` are excluded
+because they would silently duplicate `tfidf`/`bm25`. Every retrieval result
+reports the actual `retrieval_mode` and the selected `retrieval_strategy`, and
+agents record the experiment in `strategy_selections`.
+
+```bash
+RETRIEVAL_METHOD=adaptive \
+  uvicorn backend.api.routes:app --reload
+
+curl -s http://localhost:8000/api/retrieval/strategies
+curl -X POST http://localhost:8000/api/retrieval/strategies/reset
+```
+
+`GET /api/retrieval/strategies` shows the recorded trials/success rates and the
+next choice for each task type. `RETRIEVAL_STRATEGY_EXPLORATION` controls the
+exploration weight (default `0.35`; `0` exploits the best known method only).
+
+---
+
 # 🏗️ Architecture
 
 ```text
@@ -842,7 +913,8 @@ ai-agent-failure-memory/
 │   │   ├── store.py           # SQLite persistence, dedup/merge, feedback
 │   │   ├── embedding.py       # hashing / tfidf / optional neural
 │   │   ├── ranking.py         # explainable score
-│   │   └── retriever.py       # selection gates + contradiction detection
+│   │   ├── retriever.py       # selection gates + contradiction detection
+│   │   └── strategies.py      # adaptive UCB1 strategy selection
 │   │
 │   ├── analysis/
 │   │   ├── failure_analyzer.py
@@ -1468,9 +1540,11 @@ without the token — nothing more.
 
 * **Protected endpoints** (task execution + memory mutation):
   `POST /api/tasks/run`, `POST /api/tasks/compare`,
-  `POST /api/scenarios/{id}/run`, `POST /api/memories/lifecycle/apply`,
+  `POST /api/tasks/cross-agent`, `POST /api/scenarios/{id}/run`,
+  `POST /api/memories/lifecycle/apply`,
   `POST /api/memories/{id}/feedback`, `PATCH /api/memories/{id}/status`,
-  `DELETE /api/memories/{id}`, `POST /api/evaluation/run`.
+  `DELETE /api/memories/{id}`, `POST /api/retrieval/strategies/reset`,
+  `POST /api/evaluation/run`.
   Read-only endpoints — health, config, listings, retrieval preview, docs —
   stay open so container health checks and dashboard reads keep working.
 
@@ -1531,28 +1605,15 @@ Already shipped:
   them.
 - **Failure recurrence tracking** — memories are deduplicated/merged and count
   repeated occurrences.
+- **Cross-agent learning** — memories carry origin/reinforcement/usage agent
+  provenance; verified shared lessons cross agent boundaries and can be reused
+  by other agents (`POST /api/tasks/cross-agent`, `GET /api/agents`).
+- **Automatic strategy selection** — `RETRIEVAL_METHOD=adaptive` experiments
+  across retrieval methods with a deterministic UCB1 bandit and remembers the
+  best strategy per task type (`GET /api/retrieval/strategies`).
 
-Still future work:
-
-### Cross-Agent Learning
-
-Allow multiple agents to share verified failure lessons.
-
-```text
-Agent A
-   ↓
-Failure
-   ↓
-Shared Memory
-   ↓
-Agent B
-   ↓
-Avoids failure
-```
-
-### Automatic Experimentation
-
-The system could test multiple strategies and remember which one performs best.
+No Phase 3 items remain: both previously-listed future features are shipped and
+covered by tests.
 
 ---
 
@@ -1581,8 +1642,8 @@ The system could test multiple strategies and remember which one performs best.
 * [x] Memory decay
 * [x] Memory lifecycle automation (classify / plan / apply)
 * [x] Retrieval-method comparison (tfidf / bm25 / embedding / hybrid)
-* [ ] Cross-agent learning
-* [ ] Automatic strategy selection
+* [x] Cross-agent learning
+* [x] Automatic strategy selection
 
 ---
 

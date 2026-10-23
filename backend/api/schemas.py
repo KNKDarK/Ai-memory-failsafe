@@ -27,6 +27,15 @@ def _validate_task(value: str) -> str:
     return stripped
 
 
+def _validate_agent_id(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("agent_id must not be blank")
+    if len(stripped) > 128:
+        raise ValueError("agent_id must be at most 128 characters")
+    return stripped
+
+
 def _check_env_structure(
     value: Any, depth: int, max_depth: int, max_items: int, max_length: int
 ) -> None:
@@ -131,6 +140,7 @@ class RunTaskRequest(BaseModel):
 
     task: str = Field(min_length=1, max_length=2000)
     mode: Literal["baseline", "naive", "memory"] = "memory"
+    agent_id: str = Field(default="default", min_length=1, max_length=128)
     max_attempts: int = Field(default=2, ge=1, le=6)
     environment: EnvironmentSpec | None = None
 
@@ -138,6 +148,11 @@ class RunTaskRequest(BaseModel):
     @classmethod
     def _task_not_blank(cls, value: str) -> str:
         return _validate_task(value)
+
+    @field_validator("agent_id")
+    @classmethod
+    def _agent_id_not_blank(cls, value: str) -> str:
+        return _validate_agent_id(value)
 
 
 class CompareTasksRequest(BaseModel):
@@ -146,6 +161,7 @@ class CompareTasksRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     task: str = Field(min_length=1, max_length=2000)
+    agent_id: str = Field(default="default", min_length=1, max_length=128)
     max_attempts: int = Field(default=2, ge=1, le=6)
     environment: EnvironmentSpec | None = None
 
@@ -153,6 +169,33 @@ class CompareTasksRequest(BaseModel):
     @classmethod
     def _task_not_blank(cls, value: str) -> str:
         return _validate_task(value)
+
+    @field_validator("agent_id")
+    @classmethod
+    def _agent_id_not_blank(cls, value: str) -> str:
+        return _validate_agent_id(value)
+
+
+class CrossAgentRunRequest(BaseModel):
+    """Let one agent learn a lesson and another agent reuse it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task: str = Field(min_length=1, max_length=2000)
+    learner_agent_id: str = Field(default="agent-a", min_length=1, max_length=128)
+    consumer_agent_id: str = Field(default="agent-b", min_length=1, max_length=128)
+    max_attempts: int = Field(default=2, ge=1, le=6)
+    environment: EnvironmentSpec | None = None
+
+    @field_validator("task")
+    @classmethod
+    def _task_not_blank(cls, value: str) -> str:
+        return _validate_task(value)
+
+    @field_validator("learner_agent_id", "consumer_agent_id")
+    @classmethod
+    def _agent_ids_not_blank(cls, value: str) -> str:
+        return _validate_agent_id(value)
 
 
 class RetrievalPreviewRequest(BaseModel):
@@ -162,12 +205,19 @@ class RetrievalPreviewRequest(BaseModel):
 
     task: str | None = Field(default=None, max_length=2000)
     scenario_id: str | None = None
+    agent_id: str | None = Field(default=None, max_length=128)
+    cross_agent: bool = True
     limit: int = Field(default=5, ge=1, le=50)
 
     @field_validator("task")
     @classmethod
     def _task_not_blank(cls, value: str | None) -> str | None:
         return None if value is None else _validate_task(value)
+
+    @field_validator("agent_id")
+    @classmethod
+    def _agent_id_not_blank(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_agent_id(value)
 
 
 class FeedbackRequest(BaseModel):

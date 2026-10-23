@@ -206,6 +206,12 @@ def config(request: Request) -> dict:
             "min_score": settings.retrieval_min_score,
             "min_similarity": settings.retrieval_min_similarity,
             "method": settings.retrieval_method,
+            "adaptive_strategy_selection": settings.retrieval_method == "adaptive",
+            "strategy_exploration": settings.retrieval_strategy_exploration,
+        },
+        "cross_agent": {
+            "enabled": settings.cross_agent_learning,
+            "min_confidence": settings.cross_agent_min_confidence,
         },
         "weights": {
             "similarity": settings.weight_similarity,
@@ -284,7 +290,11 @@ def run_task(payload: schemas.RunTaskRequest, request: Request) -> dict:
         else default_environment()
     )
     run = runtime.agent().run_task(
-        payload.task, env, mode=payload.mode, max_attempts=payload.max_attempts
+        payload.task,
+        env,
+        mode=payload.mode,
+        max_attempts=payload.max_attempts,
+        agent_id=payload.agent_id,
     )
     return serializers.run_dict(run, redactor)
 
@@ -302,16 +312,81 @@ def compare_task(payload: schemas.CompareTasksRequest, request: Request) -> dict
     )
 
     baseline = agent.run_task(
-        payload.task, env.clone(), mode="baseline", max_attempts=payload.max_attempts
+        payload.task,
+        env.clone(),
+        mode="baseline",
+        max_attempts=payload.max_attempts,
+        agent_id=payload.agent_id,
     )
     memory = agent.run_task(
-        payload.task, env.clone(), mode="memory", max_attempts=payload.max_attempts
+        payload.task,
+        env.clone(),
+        mode="memory",
+        max_attempts=payload.max_attempts,
+        agent_id=payload.agent_id,
     )
     return {
         "task": payload.task,
+        "agent_id": payload.agent_id,
         "max_attempts": payload.max_attempts,
         "baseline": serializers.run_dict(baseline, redactor),
         "memory": serializers.run_dict(memory, redactor),
+    }
+
+
+@router.post("/tasks/cross-agent", dependencies=_PROTECTED)
+def run_cross_agent_task(payload: schemas.CrossAgentRunRequest, request: Request) -> dict:
+    """Agent A learns from a failure, then Agent B reuses the shared lesson.
+
+    Both runs share the persistent store but use fresh, identical environments,
+    so the consumer's improvement can only come from cross-agent memory.
+    """
+    runtime = _manager(request).require()
+    redactor = _redactor(request)
+    env = (
+        payload.environment.to_environment()
+        if payload.environment is not None
+        else default_environment()
+    )
+    agent = runtime.agent()
+
+    learner_run = agent.run_task(
+        payload.task,
+        env.clone(),
+        mode="memory",
+        max_attempts=payload.max_attempts,
+        agent_id=payload.learner_agent_id,
+    )
+    learned_ids = list(
+        dict.fromkeys(learner_run.memory_ids_created + learner_run.memory_ids_reinforced)
+    )
+    shared_ids = [
+        memory_id
+        for memory_id in learned_ids
+        if (memory := runtime.store.get(memory_id)) is not None and memory.shared
+    ]
+    consumer_run = agent.run_task(
+        payload.task,
+        env.clone(),
+        mode="memory",
+        max_attempts=payload.max_attempts,
+        agent_id=payload.consumer_agent_id,
+    )
+    reused_ids = [
+        memory_id for memory_id in consumer_run.memory_ids_applied if memory_id in shared_ids
+    ]
+
+    return {
+        "task": payload.task,
+        "learner_agent_id": payload.learner_agent_id,
+        "consumer_agent_id": payload.consumer_agent_id,
+        "learner": serializers.run_dict(learner_run, redactor),
+        "consumer": serializers.run_dict(consumer_run, redactor),
+        "learned_memory_ids": learned_ids,
+        "shared_memory_ids": shared_ids,
+        "reused_memory_ids": reused_ids,
+        "cross_agent_learning_observed": bool(reused_ids),
+        "agent_stats": runtime.store.agent_stats(),
     }
 
 
@@ -332,16 +407,101 @@ def preview_retrieval(payload: schemas.RetrievalPreviewRequest, request: Request
     if not task:
         raise HTTPException(status_code=422, detail="provide a non-empty task or a scenario_id")
 
-    results = runtime.agent().preview_retrieval(task, env)
+    results = runtime.agent().preview_retrieval(
+        task,
+        env,
+        agent_id=payload.agent_id,
+        cross_agent=payload.cross_agent,
+    )
     serialized = [serializers.retrieval_dict(result, redactor) for result in results]
     selected = [item["memory"]["id"] for item in serialized if item["selected"]]
     return {
         "task": task,
+        "agent_id": payload.agent_id,
         "retrieval_mode": results[0].retrieval_mode if results else None,
+        "retrieval_strategy": results[0].retrieval_strategy if results else None,
         "selected_ids": selected,
         "candidate_count": len(serialized),
         "results": serialized[: payload.limit],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Cross-agent learning
+# --------------------------------------------------------------------------- #
+@router.get("/agents")
+def list_agents(request: Request) -> dict:
+    """Per-agent provenance, sharing, and cross-agent reuse counters."""
+    runtime = _manager(request).require()
+    return runtime.store.agent_stats()
+
+
+@router.get("/agents/{agent_id}")
+def get_agent(agent_id: str, request: Request) -> dict:
+    """One agent's counters plus every lesson it created, reinforced, or used."""
+    runtime = _manager(request).require()
+    redactor = _redactor(request)
+    summary = runtime.store.agent_stats()
+    record = next(
+        (item for item in summary["agents"] if item["agent_id"] == agent_id),
+        None,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    memories = [
+        memory
+        for memory in runtime.store.list(include_inactive=True)
+        if memory.agent_id == agent_id
+        or agent_id in memory.contributing_agent_ids
+        or agent_id in memory.used_by_agent_ids
+    ]
+    return {
+        "agent": record,
+        "memories": [serializers.memory_dict(memory, redactor) for memory in memories],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Automatic retrieval-strategy selection
+# --------------------------------------------------------------------------- #
+@router.get("/retrieval/strategies")
+def retrieval_strategies(request: Request) -> dict:
+    """Show observed strategy outcomes and the next choice for each task type."""
+    runtime = _manager(request).require()
+    settings = _manager(request).settings
+    embedder_available = runtime.embedder is not None
+    stats = runtime.store.strategy_stats()
+    known_task_types = {row["task_type"] for row in stats}
+    known_task_types.update(
+        memory.task_type for memory in runtime.store.list(include_inactive=True)
+    )
+    selections = {
+        task_type: runtime.strategy_selector.choose(
+            task_type, embedder_available=embedder_available
+        )
+        for task_type in sorted(known_task_types or {"generic"})
+    }
+    return {
+        "retrieval_method": settings.retrieval_method,
+        "adaptive": settings.retrieval_method == "adaptive",
+        "exploration": settings.retrieval_strategy_exploration,
+        "embedder_available": embedder_available,
+        "candidates": list(
+            runtime.strategy_selector.candidates(embedder_available=embedder_available)
+        ),
+        "stats": stats,
+        "next_selection": selections,
+    }
+
+
+@router.post("/retrieval/strategies/reset", dependencies=_PROTECTED)
+def reset_retrieval_strategies(
+    request: Request, task_type: str | None = Query(default=None)
+) -> dict:
+    """Clear learned strategy outcomes (all task types, or one)."""
+    runtime = _manager(request).require()
+    cleared = runtime.store.reset_strategy_stats(task_type)
+    return {"cleared": cleared, "task_type": task_type}
 
 
 # --------------------------------------------------------------------------- #
@@ -352,6 +512,8 @@ def list_memories(
     request: Request,
     status: str | None = Query(default=None),
     task_type: str | None = Query(default=None),
+    agent_id: str | None = Query(default=None),
+    shared: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     include_inactive: bool = Query(default=True),
@@ -368,12 +530,18 @@ def list_memories(
     memories = runtime.store.list(
         status=parsed_status,
         task_type=task_type,
+        agent_id=agent_id,
+        shared=shared,
         limit=limit,
         offset=offset,
         include_inactive=include_inactive,
     )
     total = runtime.store.count(
-        status=parsed_status, task_type=task_type, include_inactive=include_inactive
+        status=parsed_status,
+        task_type=task_type,
+        agent_id=agent_id,
+        shared=shared,
+        include_inactive=include_inactive,
     )
     return {
         "items": [serializers.memory_dict(memory, redactor) for memory in memories],
@@ -393,6 +561,7 @@ def memory_stats(request: Request) -> dict:
     )
     report.pop("items", None)
     stats["lifecycle"] = report
+    stats["retrieval_strategies"] = runtime.store.strategy_stats()
     return stats
 
 

@@ -64,6 +64,14 @@ _POLICY_BY_MODE: dict[str, MemoryPolicy] = {
 }
 
 
+def _clean_agent_id(value: str | None) -> str:
+    """Normalise an agent identifier for provenance and sharing."""
+    agent_id = (value or "").strip() or "default"
+    if len(agent_id) > 128:
+        raise ValueError("agent_id must be at most 128 characters")
+    return agent_id
+
+
 class FailureMemoryAgent:
     def __init__(
         self,
@@ -99,6 +107,7 @@ class FailureMemoryAgent:
         mode: str = "memory",
         max_attempts: int | None = None,
         policy: MemoryPolicy | None = None,
+        agent_id: str = "default",
     ) -> TaskRun:
         if env is None:
             from backend.agent.environment import default_environment
@@ -107,6 +116,7 @@ class FailureMemoryAgent:
         task = (task or "").strip()
         if not task:
             raise ValueError("task must not be empty")
+        agent_id = _clean_agent_id(agent_id)
 
         policy = policy or _POLICY_BY_MODE.get(mode, MEMORY_POLICY)
         max_attempts = max(1, max_attempts or self.settings.default_max_attempts)
@@ -117,6 +127,7 @@ class FailureMemoryAgent:
             task=task,
             task_type=task_type,
             mode=mode,  # type: ignore[arg-type]
+            agent_id=agent_id,
             environment_id=env.id,
             max_attempts=max_attempts,
             started_at=utcnow(),
@@ -131,7 +142,13 @@ class FailureMemoryAgent:
             plan: Plan = base_plan
 
             if policy.retrieve:
-                retrieved = self._retrieve(task, task_type, base_plan, validate=policy.validate)
+                retrieved = self._retrieve(
+                    task,
+                    task_type,
+                    base_plan,
+                    validate=policy.validate,
+                    agent_id=agent_id,
+                )
                 plan = base_plan
                 planner = getattr(self.planner, "plan_with_memory", None)
                 if callable(planner):
@@ -164,11 +181,39 @@ class FailureMemoryAgent:
             )
             run.attempts.append(record)
 
+            # Feed adaptive retrieval experiments: an attempt that actually
+            # selected memory is the outcome signal for that strategy. Explicit
+            # methods leave ``retrieval_strategy`` empty and are not recorded.
+            retrieval_strategy = next(
+                (result.retrieval_strategy for result in retrieved if result.retrieval_strategy),
+                "",
+            )
+            if policy.retrieve and retrieval_strategy and any(
+                result.selected for result in retrieved
+            ):
+                selection = self.store.record_strategy_outcome(
+                    task_type,
+                    retrieval_strategy,
+                    success=record.success,
+                    agent_id=agent_id,
+                )
+                run.strategy_selections.append(
+                    {
+                        "attempt": attempt_index,
+                        "strategy": retrieval_strategy,
+                        "success": record.success,
+                        "trials": selection["trials"],
+                        "success_rate": selection["success_rate"],
+                    }
+                )
+
             for memory_id in applied_ids:
                 if memory_id not in run.memory_ids_applied:
                     run.memory_ids_applied.append(memory_id)
                 if policy.retrieve:
-                    self.store.record_use(memory_id, success=record.success)
+                    self.store.record_use(
+                        memory_id, success=record.success, agent_id=agent_id
+                    )
 
             if record.success:
                 run.final_success = True
@@ -206,7 +251,9 @@ class FailureMemoryAgent:
             if policy.learn:
                 analysis = self.analyzer.analyze(record)
                 run.analyses.append(analysis)
-                memory_id, created = self._learn(analysis, record, task_type)
+                memory_id, created = self._learn(
+                    analysis, record, task_type, agent_id=agent_id
+                )
                 if memory_id:
                     target = run.memory_ids_created if created else run.memory_ids_reinforced
                     if memory_id not in target:
@@ -226,7 +273,12 @@ class FailureMemoryAgent:
         return self.analyzer.analyze(execution)
 
     def preview_retrieval(
-        self, task: str, env: SimulatedEnvironment | None = None
+        self,
+        task: str,
+        env: SimulatedEnvironment | None = None,
+        *,
+        agent_id: str | None = None,
+        cross_agent: bool = True,
     ) -> list[RetrievalResult]:
         """Retrieve memories for a task *without* executing it.
 
@@ -244,10 +296,23 @@ class FailureMemoryAgent:
             env = default_environment()
         task_type = detect_task_type(task)
         plan = self.planner.plan(task, env)
-        return self._retrieve(task, task_type, plan)
+        return self._retrieve(
+            task,
+            task_type,
+            plan,
+            agent_id=agent_id,
+            cross_agent=cross_agent,
+        )
 
     def _retrieve(
-        self, task: str, task_type: str, plan: Plan, *, validate: bool = True
+        self,
+        task: str,
+        task_type: str,
+        plan: Plan,
+        *,
+        validate: bool = True,
+        agent_id: str | None = None,
+        cross_agent: bool = True,
     ) -> list[RetrievalResult]:
         if self.retriever is None:
             return []
@@ -262,6 +327,8 @@ class FailureMemoryAgent:
             limit=self.settings.retrieval_limit,
             min_score=self.settings.retrieval_min_score if validate else 0.0,
             include_inactive=not validate,
+            agent_id=_clean_agent_id(agent_id) if agent_id else None,
+            cross_agent=cross_agent,
         )
         return self.retriever.retrieve(query)
 
@@ -334,10 +401,16 @@ class FailureMemoryAgent:
         return recommendations
 
     def _learn(
-        self, analysis: FailureAnalysis, execution: ExecutionRecord, task_type: str
+        self,
+        analysis: FailureAnalysis,
+        execution: ExecutionRecord,
+        task_type: str,
+        *,
+        agent_id: str = "default",
     ) -> tuple[str, bool]:
         memory = FailureMemory(
             id=uuid.uuid4().hex,
+            agent_id=agent_id,
             task=analysis.task,
             task_type=task_type or analysis.task_type,
             action=analysis.action,
