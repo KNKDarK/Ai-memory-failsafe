@@ -42,7 +42,9 @@ from backend.services import Runtime, build_runtime
 
 logger = logging.getLogger("failure_memory.api")
 
-router = APIRouter(prefix="/api")
+# Shared infrastructure (RuntimeManager, helpers, auth) lives here so
+# submodules can import it without circular dependencies.
+_api_router = APIRouter(prefix="/api")
 
 
 # --------------------------------------------------------------------------- #
@@ -173,7 +175,7 @@ def _scenario_summary(scenario: Scenario) -> dict:
 # --------------------------------------------------------------------------- #
 # Meta
 # --------------------------------------------------------------------------- #
-@router.get("/health")
+@_api_router.get("/health")
 def health(request: Request) -> dict:
     manager = _manager(request)
     payload = {
@@ -189,7 +191,7 @@ def health(request: Request) -> dict:
     return payload
 
 
-@router.get("/config")
+@_api_router.get("/config")
 def config(request: Request) -> dict:
     """Non-secret configuration summary for the dashboard."""
     settings = _manager(request).settings
@@ -231,7 +233,7 @@ def config(request: Request) -> dict:
     }
 
 
-@router.get("/resources")
+@_api_router.get("/resources")
 def resources() -> dict:
     """Report current host/container capacity used for model throttling."""
     return detect_resources().as_dict()
@@ -240,7 +242,7 @@ def resources() -> dict:
 # --------------------------------------------------------------------------- #
 # Scenarios + self-contained demo
 # --------------------------------------------------------------------------- #
-@router.get("/scenarios")
+@_api_router.get("/scenarios")
 def list_scenarios() -> list[dict]:
     return [_scenario_summary(scenario) for scenario in build_scenarios()]
 
@@ -252,7 +254,7 @@ def list_scenarios() -> list[dict]:
 _PROTECTED = [Depends(require_api_token)]
 
 
-@router.post("/scenarios/{scenario_id}/run", dependencies=_PROTECTED)
+@_api_router.post("/scenarios/{scenario_id}/run", dependencies=_PROTECTED)
 def run_scenario(scenario_id: str, request: Request) -> dict:
     """Run one scenario twice (baseline and memory) on an isolated store."""
     scenario = _scenario_or_404(scenario_id)
@@ -280,7 +282,7 @@ def run_scenario(scenario_id: str, request: Request) -> dict:
 # --------------------------------------------------------------------------- #
 # Live tasks (persistent store)
 # --------------------------------------------------------------------------- #
-@router.post("/tasks/run", dependencies=_PROTECTED)
+@_api_router.post("/tasks/run", dependencies=_PROTECTED)
 def run_task(payload: schemas.RunTaskRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -299,7 +301,7 @@ def run_task(payload: schemas.RunTaskRequest, request: Request) -> dict:
     return serializers.run_dict(run, redactor)
 
 
-@router.post("/tasks/compare", dependencies=_PROTECTED)
+@_api_router.post("/tasks/compare", dependencies=_PROTECTED)
 def compare_task(payload: schemas.CompareTasksRequest, request: Request) -> dict:
     """Run the same task in baseline and memory mode with identical environments."""
     runtime = _manager(request).require()
@@ -334,7 +336,7 @@ def compare_task(payload: schemas.CompareTasksRequest, request: Request) -> dict
     }
 
 
-@router.post("/tasks/cross-agent", dependencies=_PROTECTED)
+@_api_router.post("/tasks/cross-agent", dependencies=_PROTECTED)
 def run_cross_agent_task(payload: schemas.CrossAgentRunRequest, request: Request) -> dict:
     """Agent A learns from a failure, then Agent B reuses the shared lesson.
 
@@ -393,7 +395,7 @@ def run_cross_agent_task(payload: schemas.CrossAgentRunRequest, request: Request
 # --------------------------------------------------------------------------- #
 # Retrieval explanation
 # --------------------------------------------------------------------------- #
-@router.post("/retrieval/preview")
+@_api_router.post("/retrieval/preview")
 def preview_retrieval(payload: schemas.RetrievalPreviewRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -429,14 +431,14 @@ def preview_retrieval(payload: schemas.RetrievalPreviewRequest, request: Request
 # --------------------------------------------------------------------------- #
 # Cross-agent learning
 # --------------------------------------------------------------------------- #
-@router.get("/agents")
+@_api_router.get("/agents")
 def list_agents(request: Request) -> dict:
     """Per-agent provenance, sharing, and cross-agent reuse counters."""
     runtime = _manager(request).require()
     return runtime.store.agent_stats()
 
 
-@router.get("/agents/{agent_id}")
+@_api_router.get("/agents/{agent_id}")
 def get_agent(agent_id: str, request: Request) -> dict:
     """One agent's counters plus every lesson it created, reinforced, or used."""
     runtime = _manager(request).require()
@@ -464,7 +466,7 @@ def get_agent(agent_id: str, request: Request) -> dict:
 # --------------------------------------------------------------------------- #
 # Automatic retrieval-strategy selection
 # --------------------------------------------------------------------------- #
-@router.get("/retrieval/strategies")
+@_api_router.get("/retrieval/strategies")
 def retrieval_strategies(request: Request) -> dict:
     """Show observed strategy outcomes and the next choice for each task type."""
     runtime = _manager(request).require()
@@ -494,7 +496,7 @@ def retrieval_strategies(request: Request) -> dict:
     }
 
 
-@router.post("/retrieval/strategies/reset", dependencies=_PROTECTED)
+@_api_router.post("/retrieval/strategies/reset", dependencies=_PROTECTED)
 def reset_retrieval_strategies(
     request: Request, task_type: str | None = Query(default=None)
 ) -> dict:
@@ -507,7 +509,7 @@ def reset_retrieval_strategies(
 # --------------------------------------------------------------------------- #
 # Memories
 # --------------------------------------------------------------------------- #
-@router.get("/memories")
+@_api_router.get("/memories")
 def list_memories(
     request: Request,
     status: str | None = Query(default=None),
@@ -551,7 +553,7 @@ def list_memories(
     }
 
 
-@router.get("/memories/stats")
+@_api_router.get("/memories/stats")
 def memory_stats(request: Request) -> dict:
     runtime = _manager(request).require()
     settings = _manager(request).settings
@@ -565,14 +567,14 @@ def memory_stats(request: Request) -> dict:
     return stats
 
 
-@router.get("/memories/contradictions")
+@_api_router.get("/memories/contradictions")
 def memory_contradictions(request: Request) -> dict:
     runtime = _manager(request).require()
     conflicts = find_contradictions(runtime.store.list())
     return {"count": len(conflicts), "conflicts": conflicts}
 
 
-@router.get("/memories/lifecycle")
+@_api_router.get("/memories/lifecycle")
 def get_memory_lifecycle(request: Request) -> dict:
     """Dry run: label every memory and list the transitions the policy *would* apply."""
     runtime = _manager(request).require()
@@ -581,7 +583,7 @@ def get_memory_lifecycle(request: Request) -> dict:
     return lifecycle_report(memories, policy=policy_from_settings(settings))
 
 
-@router.post("/memories/lifecycle/apply", dependencies=_PROTECTED)
+@_api_router.post("/memories/lifecycle/apply", dependencies=_PROTECTED)
 def apply_memory_lifecycle(request: Request) -> dict:
     """Apply the deterministic lifecycle policy (active -> outdated -> incorrect -> archived)."""
     runtime = _manager(request).require()
@@ -593,7 +595,7 @@ def apply_memory_lifecycle(request: Request) -> dict:
     return result
 
 
-@router.get("/memories/{memory_id}")
+@_api_router.get("/memories/{memory_id}")
 def get_memory(memory_id: str, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -607,7 +609,7 @@ def get_memory(memory_id: str, request: Request) -> dict:
     }
 
 
-@router.post("/memories/{memory_id}/feedback", dependencies=_PROTECTED)
+@_api_router.post("/memories/{memory_id}/feedback", dependencies=_PROTECTED)
 def add_feedback(memory_id: str, payload: schemas.FeedbackRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -622,7 +624,7 @@ def add_feedback(memory_id: str, payload: schemas.FeedbackRequest, request: Requ
     }
 
 
-@router.patch("/memories/{memory_id}/status", dependencies=_PROTECTED)
+@_api_router.patch("/memories/{memory_id}/status", dependencies=_PROTECTED)
 def set_memory_status(memory_id: str, payload: schemas.StatusRequest, request: Request) -> dict:
     runtime = _manager(request).require()
     redactor = _redactor(request)
@@ -632,7 +634,7 @@ def set_memory_status(memory_id: str, payload: schemas.StatusRequest, request: R
     return {"memory": serializers.memory_dict(memory, redactor)}
 
 
-@router.delete("/memories/{memory_id}", dependencies=_PROTECTED)
+@_api_router.delete("/memories/{memory_id}", dependencies=_PROTECTED)
 def delete_memory(memory_id: str, request: Request) -> dict:
     runtime = _manager(request).require()
     deleted = runtime.store.delete(memory_id)
@@ -644,7 +646,7 @@ def delete_memory(memory_id: str, request: Request) -> dict:
 # --------------------------------------------------------------------------- #
 # Evaluation
 # --------------------------------------------------------------------------- #
-@router.post("/evaluation/run", dependencies=_PROTECTED)
+@_api_router.post("/evaluation/run", dependencies=_PROTECTED)
 def run_evaluation(payload: schemas.EvaluationRunRequest, request: Request) -> dict:
     settings = _manager(request).settings
     report = Benchmark(settings).run(payload.scenarios)
@@ -655,7 +657,7 @@ def run_evaluation(payload: schemas.EvaluationRunRequest, request: Request) -> d
     return report
 
 
-@router.get("/evaluation/report")
+@_api_router.get("/evaluation/report")
 def get_evaluation_report(request: Request) -> dict:
     settings = _manager(request).settings
     target = Path(settings.evaluation_report_path)
@@ -670,7 +672,7 @@ def get_evaluation_report(request: Request) -> dict:
 # --------------------------------------------------------------------------- #
 # LLM evaluation (real-model benchmark)
 # --------------------------------------------------------------------------- #
-@router.post("/evaluation/llm/run", dependencies=_PROTECTED)
+@_api_router.post("/evaluation/llm/run", dependencies=_PROTECTED)
 def run_llm_evaluation(payload: schemas.LLMEvaluationRequest, request: Request) -> dict:
     """Run the real-LLM evaluation benchmark (baseline / naive / memory arms).
 
@@ -690,7 +692,7 @@ def run_llm_evaluation(payload: schemas.LLMEvaluationRequest, request: Request) 
     )
 
 
-@router.get("/evaluation/llm/reports")
+@_api_router.get("/evaluation/llm/reports")
 def list_llm_evaluation_reports(request: Request) -> dict:
     """List saved LLM benchmark reports (newest first)."""
     from backend.evaluation.llm_benchmark import list_reports
@@ -698,7 +700,7 @@ def list_llm_evaluation_reports(request: Request) -> dict:
     return {"reports": list_reports(_manager(request).settings)}
 
 
-@router.get("/evaluation/llm/reports/{run_id}")
+@_api_router.get("/evaluation/llm/reports/{run_id}")
 def get_llm_evaluation_report(run_id: str, request: Request) -> dict:
     """Fetch one saved LLM benchmark report by run id."""
     from backend.evaluation.llm_benchmark import load_report
@@ -774,7 +776,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
             content={"detail": "request body is too deeply nested"},
         )
 
-    app.include_router(router)
+    app.include_router(_api_router)
     return app
 
 
