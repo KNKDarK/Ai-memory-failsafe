@@ -50,7 +50,7 @@ class FailsafeClient:
     """
 
     def __init__(self, base_url: str = "http://localhost:8000", api_key: str | None = None) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = str(base_url).rstrip("/")
         self.api_key = api_key
         self._client = httpx.Client(
             timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
@@ -105,7 +105,7 @@ class FailsafeClient:
             "min_confidence": min_confidence,
             "top_k": top_k,
         }
-        resp = self._post("/api/v1/sdk/query-lessons", payload)
+        resp = self._post("/v1/sdk/query-lessons", payload)
         return resp
 
     def record_failure(
@@ -157,7 +157,7 @@ class FailsafeClient:
             "project_id": project_id,
             "agent_id": agent_id,
         }
-        resp = self._post("/api/v1/sdk/record-failure", payload)
+        resp = self._post("/v1/sdk/record-failure", payload)
         return resp
 
     def report_outcome(
@@ -204,7 +204,7 @@ class FailsafeClient:
             "task_success": task_success,
             "project_id": project_id,
         }
-        resp = self._post("/api/v1/sdk/feedback", payload)
+        resp = self._post("/v1/sdk/feedback", payload)
         return resp
 
     # ------------------------------------------------------------------ #

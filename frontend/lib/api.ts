@@ -186,7 +186,7 @@ export const api = {
 
   // Memory Replay Lab
   replayRun: (body: ReplayRunRequest) =>
-    post<ReplayRunResponse>("/api/lab/replay", body),
+    post<ReplayRunResponse>("/lab/replay", body),
 };
 
 export type { FailureMemory };
