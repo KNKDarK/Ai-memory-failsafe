@@ -19,16 +19,20 @@ import type {
   LlmEvaluationReport,
   LlmEvaluationRequest,
   LlmReportSummary,
+  MemoryAttributionLab,
   MemoryDetailResponse,
   MemoryListResponse,
   MemoryMutationResponse,
   MemoryStats,
   MemoryStatus,
+  ReplayRunRequest,
+  ReplayRunResponse,
   RetrievalPreviewRequest,
   RetrievalPreviewResponse,
   RunTaskRequest,
   ScenarioRunResponse,
   ScenarioSummary,
+  StepTraceLab,
   TaskRun,
 } from "./types";
 
@@ -179,6 +183,10 @@ export const api = {
     request<LlmEvaluationReport>(
       `/api/evaluation/llm/reports/${encodeURIComponent(runId)}`,
     ),
+
+  // Memory Replay Lab
+  replayRun: (body: ReplayRunRequest) =>
+    post<ReplayRunResponse>("/api/lab/replay", body),
 };
 
 export type { FailureMemory };

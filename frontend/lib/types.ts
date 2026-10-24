@@ -649,3 +649,56 @@ export interface LlmEvaluationRequest {
   repetitions?: number;
   modes?: LlmArmMode[] | null;
 }
+
+// --------------------------------------------------------------------------- #
+// Memory Replay Lab (side-by-side baseline vs treatment comparison)
+// --------------------------------------------------------------------------- #
+
+export type ExecutionModeLab = "simulated" | "real";
+
+export interface StepTraceLab {
+  step_number: number;
+  action: string;
+  tool_call?: string | null;
+  output?: string | null;
+  error?: string | null;
+}
+
+export interface MemoryAttributionLab {
+  lesson_id: string;
+  lesson_text: string;
+  retrieval_strategy: string;
+  similarity_score: number;
+  confidence_score: number;
+  retrieved: boolean;
+  applied: boolean;
+  rejection_reason?: string | null;
+  is_root_cause_verified: boolean;
+}
+
+export interface ExecutionTraceLab {
+  execution_mode: ExecutionModeLab;
+  memory_enabled: boolean;
+  success: boolean;
+  total_attempts: number;
+  execution_time_ms: number;
+  steps: StepTraceLab[];
+  retrieved_memories: MemoryAttributionLab[];
+  prevention_injections: string[];
+}
+
+export interface ReplayRunRequest {
+  scenario_id: string;
+  task_input: string;
+  execution_mode?: ExecutionModeLab;
+  project_id?: string;
+}
+
+export interface ReplayRunResponse {
+  replay_id: string;
+  scenario_id: string;
+  execution_mode: ExecutionModeLab;
+  baseline: ExecutionTraceLab;
+  treatment: ExecutionTraceLab;
+  delta: Record<string, unknown>;
+}
