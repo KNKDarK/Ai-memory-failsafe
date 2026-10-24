@@ -16,20 +16,15 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from dataclasses import dataclass, field
 
 from backend.agent.agent import FailureMemoryAgent, MemoryPolicy
 from backend.agent.environment import SimulatedEnvironment
 from backend.agent.models import (
     ExecutionRecord,
-    Plan,
-    Recommendation,
-    StepTrace as InternalStepTrace,
     TaskRun,
 )
 from backend.config import Settings, get_settings
-from backend.domain import OutcomeType, utcnow
 
 logger = logging.getLogger("failure_memory.orchestrator")
 
@@ -37,6 +32,7 @@ logger = logging.getLogger("failure_memory.orchestrator")
 # --------------------------------------------------------------------------- #
 # Public trace types consumed by the Replay Lab and SDK
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class StepTraceRecorder:
@@ -81,6 +77,7 @@ class ExecutionTrace:
 # --------------------------------------------------------------------------- #
 # Orchestrator
 # --------------------------------------------------------------------------- #
+
 
 class AgentOrchestrator:
     """Wraps ``FailureMemoryAgent`` and records rich execution traces.
@@ -156,9 +153,7 @@ class AgentOrchestrator:
 
         # --- Collect step traces across all attempts ---------------------- #
         for attempt_record in run.attempts:
-            trace.steps.extend(
-                self._build_step_traces(attempt_record)
-            )
+            trace.steps.extend(self._build_step_traces(attempt_record))
 
         # --- Collect memory attributions from the first attempt's retrieval#
         if run.attempts and policy is not None and policy.retrieve:
@@ -178,11 +173,7 @@ class AgentOrchestrator:
                     step_number=idx,
                     action=step_trace.step.description or f"run {tool_result.tool}",
                     tool_call=tool_result.tool if not step_trace.step.is_prevention else None,
-                    output=(
-                        str(tool_result.output)
-                        if tool_result.output is not None
-                        else None
-                    ),
+                    output=(str(tool_result.output) if tool_result.output is not None else None),
                     error=tool_result.error,
                 )
             )
@@ -255,6 +246,7 @@ class AgentOrchestrator:
 # Convenience: run_task_with_trace (alias for direct use without full orchestrator)
 # --------------------------------------------------------------------------- #
 
+
 def run_task_with_trace(
     task: str,
     env: SimulatedEnvironment | None = None,
@@ -270,6 +262,4 @@ def run_task_with_trace(
     an orchestrator once and calling :meth:`AgentOrchestrator.run_task`.
     """
     orch = AgentOrchestrator()
-    return orch.run_task(
-        task, env=env, mode=mode, max_attempts=max_attempts, agent_id=agent_id
-    )
+    return orch.run_task(task, env=env, mode=mode, max_attempts=max_attempts, agent_id=agent_id)
