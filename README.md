@@ -1511,6 +1511,90 @@ The development process therefore naturally reflects the project's central conce
 
 ---
 
+---
+
+## 🔄 Memory Replay Lab
+
+The **Memory Replay Lab** is a side-by-side evaluation harness that runs the same task twice — once with failure-memory retrieval disabled (**baseline**) and once enabled (**treatment**) — then reports real metric deltas.
+
+### Quick Start
+
+1. Start the backend: `uvicorn backend.api.routes:app --port 8000`
+2. Open the dashboard in your browser at `http://localhost:3000/lab`
+3. Enter a scenario ID and task input, choose execution mode (Simulated / Real), and click **Run Replay**
+
+### What You See
+
+- **Baseline panel** — no-memory execution with attempts, duration, steps logged, and prevention rules applied.
+- **Treatment panel** — memory-augmented execution with an embedded **Memory Attribution Inspector** showing each retrieved lesson's confidence bar, retrieval strategy badge, root-cause verification status (Confirmed / Unverified), and rejection reasons (`below_confidence_gate`, `contradiction_detected`).
+- **Delta summary row** — computed differences: `success_improved`, `attempts_saved`, `time_saved_ms`, `memories_applied_count`.
+
+### API
+
+```bash
+# Trigger a replay comparison
+curl -X POST http://localhost:8000/api/lab/replay \
+  -H "Content-Type: application/json" \
+  -d '{"scenario_id":"missing_config_deploy","task_input":"Deploy the application with DATABASE_URL present.","execution_mode":"simulated"}'
+```
+
+Full details are in [`docs/replay_lab.md`](docs/replay_lab.md).
+
+---
+
+## 🐍 Python Developer SDK Quickstart
+
+The **Developer SDK** exposes three REST endpoints under `/api/v1/sdk/` for external agents to query lessons, record failures, and submit feedback. A synchronous Python client (`FailsafeClient`) is included in `src/ai_memory_failsafe/`.
+
+### Install & Initialise
+
+```bash
+pip install -e src/ai_memory_failsafe/
+```
+
+```python
+from ai_memory_failsafe.client import FailsafeClient, ConnectionError, FailsafeError
+
+client = FailsafeClient(base_url="http://localhost:8000")  # or with api_key="token"
+```
+
+### Record a Failure & Retrieve Lessons
+
+```python
+# Record a failure for analysis
+result = client.record_failure(
+    task_input="Deploy the application",
+    action_trace=[{"tool": "deploy", "args": {}}],
+    error_message="DATABASE_URL not set",
+    project_id="payments",
+)
+print(result["lesson_id"])  # e.g. "a1b2c3d4e5f6"
+
+# Retrieve relevant lessons for a new task
+lessons = client.get_prevention_lessons(
+    task_description="Deploy the billing service",
+    project_id="payments",
+    agent_id="agent-42",
+    min_confidence=0.65,
+)
+for lesson in lessons["lessons"]:
+    print(f"- {lesson['lesson_text']} (confidence: {lesson['confidence_score']})")
+
+# Report outcome after applying a lesson
+client.report_outcome(
+    lesson_id=lessons["lessons"][0]["lesson_id"],
+    task_success=True,
+)
+```
+
+### Multi-Tenant Isolation
+
+Pass `project_id` to scope operations: lessons recorded under `payments` are only returned when querying with `project_id="payments"`. Each project maintains independent confidence scores and bandit weights.
+
+Full API reference is in [`docs/sdk_integration.md`](docs/sdk_integration.md).
+
+---
+
 # 🔐 Security
 
 The system may process logs, errors, configuration information, or task data.
@@ -1615,6 +1699,8 @@ Already shipped:
 - **Cross-agent learning** — memories carry origin/reinforcement/usage agent
   provenance; verified shared lessons cross agent boundaries and can be reused
   by other agents (`POST /api/tasks/cross-agent`, `GET /api/agents`).
+- **Memory Replay Lab** — side-by-side baseline vs treatment execution with real metric deltas, full step traces, memory attribution inspector with confidence bars, strategy badges, root-cause verification status, and rejection reason capture (`below_confidence_gate`, `contradiction_detected`). Frontend dashboard at `/lab`.
+- **Developer SDK v1** — REST endpoints for lesson query (`/api/v1/sdk/query-lessons`), failure recording (`/api/v1/sdk/record-failure`), and feedback (`/api/v1/sdk/feedback`) plus a synchronous Python client wrapper (`FailsafeClient`). Supports project-scoped isolation and confidence gating.
 - **Automatic strategy selection** — `RETRIEVAL_METHOD=adaptive` experiments
   across retrieval methods with a deterministic UCB1 bandit and remembers the
   best strategy per task type (`GET /api/retrieval/strategies`).
