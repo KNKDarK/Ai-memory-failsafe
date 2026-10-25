@@ -6,21 +6,23 @@ rejection reason capture, metric delta accuracy, and the HTTP API.
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.schemas.lab import (
     ExecutionTrace as LabExecutionTrace,
+)
+from backend.api.schemas.lab import (
     MemoryAttribution as LabMemoryAttribution,
-    ReplayRunRequest,
+)
+from backend.api.schemas.lab import (
     StepTrace as LabStepTrace,
 )
 from backend.evaluation.replay_engine import MemoryReplayLab
 
-
 # ------------------------------------------------------------------ #
 # Unit tests — replay engine directly
 # ------------------------------------------------------------------ #
+
 
 class TestMemoryReplayLabEngine:
     """Direct unit tests for MemoryReplayLab.run_replay."""
@@ -159,7 +161,12 @@ class TestMemoryReplayLabEngine:
         )
         assert resp.status_code == 200
         delta = resp.json()["delta"]
-        for key in ("success_improved", "attempts_saved", "time_saved_ms", "memories_applied_count"):
+        for key in (
+            "success_improved",
+            "attempts_saved",
+            "time_saved_ms",
+            "memories_applied_count",
+        ):
             assert key in delta
 
     def test_metric_delta_types(self, api_client: TestClient) -> None:
@@ -198,6 +205,7 @@ class TestMemoryReplayLabEngine:
 # ------------------------------------------------------------------ #
 # Integration tests — rejection reasons and API-level behaviour
 # ------------------------------------------------------------------ #
+
 
 class TestRejectionReasons:
     """Verify that rejection_reason fields are captured correctly."""
@@ -305,7 +313,9 @@ class TestMetricDeltaAccuracy:
         assert resp.status_code == 200
         assert isinstance(resp.json()["delta"]["time_saved_ms"], (int, float))
 
-    def test_prevention_injections_present_when_memories_applied(self, api_client: TestClient) -> None:
+    def test_prevention_injections_present_when_memories_applied(
+        self, api_client: TestClient
+    ) -> None:
         api_client.post("/api/scenarios/missing_config_deploy/run")
         resp = api_client.post(
             "/lab/replay",

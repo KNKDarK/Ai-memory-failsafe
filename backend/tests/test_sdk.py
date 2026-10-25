@@ -27,6 +27,7 @@ if _SRC not in sys.path:
 # Fixtures
 # ------------------------------------------------------------------ #
 
+
 @pytest.fixture
 def sdk_client() -> TestClient:
     """TestClient configured for SDK endpoint testing."""
@@ -47,6 +48,7 @@ def sdk_client() -> TestClient:
 # ------------------------------------------------------------------ #
 # query-lessons tests
 # ------------------------------------------------------------------ #
+
 
 class TestQueryLessons:
     """POST /api/v1/sdk/query-lessons."""
@@ -129,8 +131,14 @@ class TestQueryLessons:
         body = response.json()
 
         for lesson in body["lessons"]:
-            for key in ("lesson_id", "failure_mode", "lesson_text", "prevention_action",
-                         "confidence_score", "verified"):
+            for key in (
+                "lesson_id",
+                "failure_mode",
+                "lesson_text",
+                "prevention_action",
+                "confidence_score",
+                "verified",
+            ):
                 assert key in lesson, f"Missing field: {key}"
             assert isinstance(lesson["confidence_score"], (int, float))
             assert 0.0 <= lesson["confidence_score"] <= 1.0
@@ -138,43 +146,61 @@ class TestQueryLessons:
 
     def test_query_validation_missing_task(self, sdk_client: TestClient) -> None:
         """Missing task_description should return HTTP 422."""
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "project_id": "x", "agent_id": "y",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "project_id": "x",
+                "agent_id": "y",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_query_validation_missing_project(self, sdk_client: TestClient) -> None:
         """Missing project_id should return HTTP 422."""
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "x", "agent_id": "y",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "x",
+                "agent_id": "y",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_query_validation_missing_agent(self, sdk_client: TestClient) -> None:
         """Missing agent_id should return HTTP 422."""
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "x", "project_id": "y",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "x",
+                "project_id": "y",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_query_validation_invalid_confidence(self, sdk_client: TestClient) -> None:
         """min_confidence outside [0,1] should return HTTP 422."""
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "x",
-            "project_id": "y",
-            "agent_id": "z",
-            "min_confidence": 1.5,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "x",
+                "project_id": "y",
+                "agent_id": "z",
+                "min_confidence": 1.5,
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_query_validation_top_k_out_of_range(self, sdk_client: TestClient) -> None:
         """top_k=0 should return HTTP 422 (must be >= 1)."""
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "x",
-            "project_id": "y",
-            "agent_id": "z",
-            "top_k": 0,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "x",
+                "project_id": "y",
+                "agent_id": "z",
+                "top_k": 0,
+            },
+        )
         assert resp.status_code in (400, 422)
 
     # ------------------------------------------------------------------ #
@@ -193,6 +219,7 @@ class TestQueryLessons:
 # ------------------------------------------------------------------ #
 # record-failure tests
 # ------------------------------------------------------------------ #
+
 
 class TestRecordFailure:
     """POST /api/v1/sdk/record-failure."""
@@ -217,46 +244,72 @@ class TestRecordFailure:
         assert isinstance(body["is_verified"], bool)
 
     def test_record_failure_validation_missing_task(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/record-failure", json={
-            "project_id": "x", "agent_id": "y", "error_message": "z",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "project_id": "x",
+                "agent_id": "y",
+                "error_message": "z",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_record_failure_validation_missing_error(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/record-failure", json={
-            "project_id": "x", "agent_id": "y", "task_input": "z",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "project_id": "x",
+                "agent_id": "y",
+                "task_input": "z",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_record_failure_validation_missing_project(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/record-failure", json={
-            "agent_id": "y", "task_input": "z", "error_message": "w",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "agent_id": "y",
+                "task_input": "z",
+                "error_message": "w",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_record_failure_validation_missing_agent(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/record-failure", json={
-            "project_id": "x", "task_input": "z", "error_message": "w",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "project_id": "x",
+                "task_input": "z",
+                "error_message": "w",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_record_failure_persists_memory(self, sdk_client: TestClient) -> None:
         """After recording a failure, querying should return the lesson."""
-        sdk_client.post("/v1/sdk/record-failure", json={
-            "project_id": "mem_project",
-            "agent_id": "agent-02",
-            "task_input": "Build the project with missing pandas",
-            "action_trace": [{"tool": "pip_install", "args": {"package": "pandas"}}],
-            "error_message": "No module named 'pandas'",
-        })
+        sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "project_id": "mem_project",
+                "agent_id": "agent-02",
+                "task_input": "Build the project with missing pandas",
+                "action_trace": [{"tool": "pip_install", "args": {"package": "pandas"}}],
+                "error_message": "No module named 'pandas'",
+            },
+        )
 
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Build the project with missing pandas",
-            "project_id": "mem_project",
-            "agent_id": "agent-02",
-            "min_confidence": 0.0,
-            "top_k": 5,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Build the project with missing pandas",
+                "project_id": "mem_project",
+                "agent_id": "agent-02",
+                "min_confidence": 0.0,
+                "top_k": 5,
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert isinstance(body["lessons"], list)
@@ -266,16 +319,20 @@ class TestRecordFailure:
 # feedback tests
 # ------------------------------------------------------------------ #
 
+
 class TestFeedback:
     """POST /api/v1/sdk/feedback."""
 
     def test_feedback_requires_api_token(self, sdk_client: TestClient) -> None:
         """The feedback endpoint is protected — should return 401 without token."""
-        resp = sdk_client.post("/v1/sdk/feedback", json={
-            "lesson_id": "some-lesson",
-            "task_success": True,
-            "agent_id": "agent-01",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/feedback",
+            json={
+                "lesson_id": "some-lesson",
+                "task_success": True,
+                "agent_id": "agent-01",
+            },
+        )
         assert resp.status_code in (200, 401, 422)
 
     def test_feedback_with_token_returns_ok(self, sdk_client: TestClient) -> None:
@@ -298,27 +355,40 @@ class TestFeedback:
         assert resp.status_code in (200, 401, 422)
 
     def test_feedback_validation_missing_lesson_id(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/feedback", json={
-            "task_success": True, "agent_id": "x",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/feedback",
+            json={
+                "task_success": True,
+                "agent_id": "x",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_feedback_validation_missing_task_success(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/feedback", json={
-            "lesson_id": "x", "agent_id": "y",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/feedback",
+            json={
+                "lesson_id": "x",
+                "agent_id": "y",
+            },
+        )
         assert resp.status_code in (400, 422)
 
     def test_feedback_validation_missing_agent(self, sdk_client: TestClient) -> None:
-        resp = sdk_client.post("/v1/sdk/feedback", json={
-            "lesson_id": "x", "task_success": True,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/feedback",
+            json={
+                "lesson_id": "x",
+                "task_success": True,
+            },
+        )
         assert resp.status_code in (400, 422)
 
 
 # ------------------------------------------------------------------ #
 # Project isolation tests
 # ------------------------------------------------------------------ #
+
 
 class TestProjectIsolation:
     """Verify lessons under project_A are isolated from queries under project_B."""
@@ -330,23 +400,29 @@ class TestProjectIsolation:
         assert seed_resp.status_code == 200
 
         # Query for project_A — should find lessons.
-        resp_a = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Deploy the application",
-            "project_id": "project_A",
-            "agent_id": "agent-a",
-            "min_confidence": 0.0,
-            "top_k": 5,
-        })
+        resp_a = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Deploy the application",
+                "project_id": "project_A",
+                "agent_id": "agent-a",
+                "min_confidence": 0.0,
+                "top_k": 5,
+            },
+        )
         assert resp_a.status_code == 200
 
         # Query for project_B — should find different set (or none).
-        resp_b = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Deploy the application",
-            "project_id": "project_B",
-            "agent_id": "agent-b",
-            "min_confidence": 0.0,
-            "top_k": 5,
-        })
+        resp_b = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Deploy the application",
+                "project_id": "project_B",
+                "agent_id": "agent-b",
+                "min_confidence": 0.0,
+                "top_k": 5,
+            },
+        )
         assert resp_b.status_code == 200
 
         # Both should return valid responses; the store may or may not filter by project.
@@ -358,20 +434,26 @@ class TestProjectIsolation:
 
     def test_project_isolation_record_failure(self, sdk_client: TestClient) -> None:
         """Record failures under different projects should not conflict."""
-        resp_a = sdk_client.post("/v1/sdk/record-failure", json={
-            "project_id": "project_A",
-            "agent_id": "agent-a",
-            "task_input": "Task A failure",
-            "error_message": "Error A",
-        })
+        resp_a = sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "project_id": "project_A",
+                "agent_id": "agent-a",
+                "task_input": "Task A failure",
+                "error_message": "Error A",
+            },
+        )
         assert resp_a.status_code in (200, 400, 503)
 
-        resp_b = sdk_client.post("/v1/sdk/record-failure", json={
-            "project_id": "project_B",
-            "agent_id": "agent-b",
-            "task_input": "Task B failure",
-            "error_message": "Error B",
-        })
+        resp_b = sdk_client.post(
+            "/v1/sdk/record-failure",
+            json={
+                "project_id": "project_B",
+                "agent_id": "agent-b",
+                "task_input": "Task B failure",
+                "error_message": "Error B",
+            },
+        )
         assert resp_b.status_code in (200, 400, 503)
 
         # Both endpoints should respond without crashing — actual lesson IDs depend on store state.
@@ -381,12 +463,13 @@ class TestProjectIsolation:
 # FailsafeClient wrapper tests
 # ------------------------------------------------------------------ #
 
+
 class TestFailsafeClient:
     """Test the Python client wrapper against the test server instance."""
 
     def test_client_get_prevention_lessons(self, sdk_client: TestClient) -> None:
         """get_prevention_lessons returns dict with query/lessons keys."""
-        from ai_memory_failsafe.client import FailsafeClient, ConnectionError
+        from ai_memory_failsafe.client import ConnectionError, FailsafeClient
 
         self._seed_memory(sdk_client)
 
@@ -409,7 +492,7 @@ class TestFailsafeClient:
 
     def test_client_record_failure(self, sdk_client: TestClient) -> None:
         """record_failure calls the SDK endpoint (may raise ConnectionError)."""
-        from ai_memory_failsafe.client import FailsafeClient, ConnectionError
+        from ai_memory_failsafe.client import ConnectionError, FailsafeClient
 
         client = FailsafeClient(base_url=sdk_client.base_url)
         try:
@@ -429,7 +512,7 @@ class TestFailsafeClient:
 
     def test_client_report_outcome(self, sdk_client: TestClient) -> None:
         """report_outcome calls feedback endpoint (may raise ConnectionError)."""
-        from ai_memory_failsafe.client import FailsafeClient, ConnectionError
+        from ai_memory_failsafe.client import ConnectionError, FailsafeClient
 
         self._seed_memory(sdk_client)
 
@@ -477,7 +560,7 @@ class TestFailsafeClient:
 
     def test_client_invalid_response(self, sdk_client: TestClient) -> None:
         """An invalid request should raise FailsafeError or ConnectionError."""
-        from ai_memory_failsafe.client import FailsafeError, ConnectionError, FailsafeClient
+        from ai_memory_failsafe.client import ConnectionError, FailsafeClient, FailsafeError
 
         client = FailsafeClient(base_url=sdk_client.base_url)
         with pytest.raises((FailsafeError, ConnectionError)):
@@ -497,6 +580,7 @@ class TestFailsafeClient:
 # Non-existent lesson feedback (404)
 # ------------------------------------------------------------------ #
 
+
 class TestNotFoundHandling:
     """Verify that referencing non-existent lessons returns proper errors."""
 
@@ -504,23 +588,29 @@ class TestNotFoundHandling:
         """Feedback on a lesson_id that doesn't exist should return 404 or similar error."""
         # The feedback endpoint requires a token; without one it's 401.
         # But we can check that the store handles missing IDs gracefully.
-        resp = sdk_client.post("/v1/sdk/feedback", json={
-            "lesson_id": "ghost-lesson-nonexistent",
-            "task_success": True,
-            "agent_id": "agent-01",
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/feedback",
+            json={
+                "lesson_id": "ghost-lesson-nonexistent",
+                "task_success": True,
+                "agent_id": "agent-01",
+            },
+        )
         # Either 401 (no token) or a proper error — both are acceptable.
         assert resp.status_code == 200
 
     def test_query_with_nonexistent_project_is_empty(self, sdk_client: TestClient) -> None:
         """Querying a project with no lessons should return an empty list."""
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Something unrelated",
-            "project_id": "nonexistent_project_xyz",
-            "agent_id": "agent-01",
-            "min_confidence": 0.0,
-            "top_k": 5,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Something unrelated",
+                "project_id": "nonexistent_project_xyz",
+                "agent_id": "agent-01",
+                "min_confidence": 0.0,
+                "top_k": 5,
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert isinstance(body["lessons"], list)
@@ -530,6 +620,7 @@ class TestNotFoundHandling:
 # Confidence gating edge cases
 # ------------------------------------------------------------------ #
 
+
 class TestConfidenceGating:
     """Edge cases for confidence-based filtering."""
 
@@ -537,35 +628,44 @@ class TestConfidenceGating:
         """min_confidence=0.0 should return all lessons regardless of score."""
         self._seed_memory(sdk_client)
 
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Deploy the application",
-            "project_id": "test_project",
-            "agent_id": "agent-01",
-            "min_confidence": 0.0,
-            "top_k": 5,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Deploy the application",
+                "project_id": "test_project",
+                "agent_id": "agent-01",
+                "min_confidence": 0.0,
+                "top_k": 5,
+            },
+        )
         assert resp.status_code == 200
 
     def test_query_with_max_confidence_returns_fewer(self, sdk_client: TestClient) -> None:
         """A high min_confidence should return fewer results than a low one."""
         self._seed_memory(sdk_client)
 
-        resp_low = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Deploy the application",
-            "project_id": "test_project",
-            "agent_id": "agent-01",
-            "min_confidence": 0.0,
-            "top_k": 5,
-        })
+        resp_low = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Deploy the application",
+                "project_id": "test_project",
+                "agent_id": "agent-01",
+                "min_confidence": 0.0,
+                "top_k": 5,
+            },
+        )
         assert resp_low.status_code == 200
 
-        resp_high = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Deploy the application",
-            "project_id": "test_project",
-            "agent_id": "agent-01",
-            "min_confidence": 0.99,
-            "top_k": 5,
-        })
+        resp_high = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Deploy the application",
+                "project_id": "test_project",
+                "agent_id": "agent-01",
+                "min_confidence": 0.99,
+                "top_k": 5,
+            },
+        )
         assert resp_high.status_code == 200
 
         # High confidence should return <= lessons than low confidence.
@@ -575,13 +675,16 @@ class TestConfidenceGating:
         """top_k=1 should never return more than 1 lesson."""
         self._seed_memory(sdk_client)
 
-        resp = sdk_client.post("/v1/sdk/query-lessons", json={
-            "task_description": "Deploy the application",
-            "project_id": "test_project",
-            "agent_id": "agent-01",
-            "min_confidence": 0.0,
-            "top_k": 1,
-        })
+        resp = sdk_client.post(
+            "/v1/sdk/query-lessons",
+            json={
+                "task_description": "Deploy the application",
+                "project_id": "test_project",
+                "agent_id": "agent-01",
+                "min_confidence": 0.0,
+                "top_k": 1,
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["lessons"]) <= 1

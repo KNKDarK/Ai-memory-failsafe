@@ -272,7 +272,7 @@ class FailsafeClient:
         """Close the underlying HTTP client connection pool."""
         self._client.close()
 
-    def __enter__(self) -> "FailsafeClient":
+    def __enter__(self) -> FailsafeClient:
         return self
 
     def __exit__(self, *args: Any) -> None:

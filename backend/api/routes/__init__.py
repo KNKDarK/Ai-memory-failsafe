@@ -8,17 +8,17 @@ routes.
 
 from __future__ import annotations
 
-# Import shared infrastructure from the legacy module.
-from backend.api.routes._legacy import RuntimeManager, _api_router
-
 # Import new route modules.
 from backend.api.routes._lab import router as lab_router
+
+# Import shared infrastructure from the legacy module.
+from backend.api.routes._legacy import RuntimeManager, _api_router
 from backend.api.routes._sdk_v1 import router as sdk_v1_router
 
 
 def create_app(settings=None, runtime=None):
     """Create the full FastAPI application with all route modules mounted."""
-    from fastapi import APIRouter, FastAPI, Request
+    from fastapi import FastAPI, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
 
@@ -74,9 +74,7 @@ def create_app(settings=None, runtime=None):
         import logging
 
         logger = logging.getLogger("failure_memory.api")
-        logger.warning(
-            "Storage error while handling %s: %s", request.url.path, type(exc).__name__
-        )
+        logger.warning("Storage error while handling %s: %s", request.url.path, type(exc).__name__)
         return JSONResponse(
             status_code=503,
             content={"detail": "failure-memory storage is temporarily unavailable"},
@@ -90,9 +88,9 @@ def create_app(settings=None, runtime=None):
         )
 
     # Mount all routers.
-    app.include_router(_api_router)       # /api/*  (legacy routes)
-    app.include_router(lab_router)        # /lab/*  (Replay Lab)
-    app.include_router(sdk_v1_router)     # /v1/sdk/* (SDK v1)
+    app.include_router(_api_router)  # /api/*  (legacy routes)
+    app.include_router(lab_router)  # /lab/*  (Replay Lab)
+    app.include_router(sdk_v1_router)  # /v1/sdk/* (SDK v1)
 
     return app
 

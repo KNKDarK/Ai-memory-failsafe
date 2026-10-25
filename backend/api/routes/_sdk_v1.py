@@ -7,9 +7,8 @@ are protected by API token authentication when configured.
 
 from __future__ import annotations
 
-import uuid
-
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, Request
 
@@ -24,6 +23,7 @@ router = APIRouter(prefix="/v1/sdk", tags=["Developer SDK v1"])
 # Query lessons — public read endpoint
 # --------------------------------------------------------------------------- #
 
+
 @router.post("/query-lessons")
 async def query_lessons(request: Request) -> dict:
     """Retrieve gated prevention lessons matching a task description.
@@ -34,7 +34,6 @@ async def query_lessons(request: Request) -> dict:
     from backend.api.schemas.sdk import (
         LessonDTO,
         QueryLessonsRequest,
-        QueryLessonsResponse,
     )
 
     body = await request.json()
@@ -74,13 +73,14 @@ async def query_lessons(request: Request) -> dict:
     return {
         "query": payload.task_description,
         "lessons_found": lessons_found,
-        "lessons": [l.model_dump() for l in lessons],
+        "lessons": [lesson.model_dump() for lesson in lessons],
     }
 
 
 # --------------------------------------------------------------------------- #
 # Record failure — protected mutation endpoint
 # --------------------------------------------------------------------------- #
+
 
 @router.post("/record-failure")
 async def record_failure(request: Request) -> dict:
@@ -89,7 +89,7 @@ async def record_failure(request: Request) -> dict:
     Returns the extracted lesson details including confidence score and whether
     the root cause was verified by evidence.
     """
-    from backend.api.schemas.sdk import RecordFailureRequest, RecordFailureResponse
+    from backend.api.schemas.sdk import RecordFailureRequest
     from backend.domain import OutcomeType, utcnow
 
     body = await request.json()
@@ -130,7 +130,7 @@ async def record_failure(request: Request) -> dict:
     )
 
     analysis = analyzer.analyze(record)
-    from backend.domain import CauseStatus, FailureCategory, MemoryStatus
+    from backend.domain import CauseStatus, MemoryStatus
     from backend.memory.models import FailureMemory
 
     memory = FailureMemory(
@@ -166,6 +166,7 @@ async def record_failure(request: Request) -> dict:
 # Feedback — protected mutation endpoint
 # --------------------------------------------------------------------------- #
 
+
 @router.post("/feedback", dependencies=[Depends(require_api_token)])
 async def submit_feedback(request: Request) -> dict:
     """Update lesson confidence and UCB1 bandit weights based on execution outcome.
@@ -185,22 +186,9 @@ async def submit_feedback(request: Request) -> dict:
     rt = runtime_manager.require()
 
     # Record feedback on the memory.
-    from backend.memory.models import MemoryFeedback, FeedbackVerdict
+    from backend.memory.models import FeedbackVerdict
 
-    verdict = (
-        FeedbackVerdict.USEFUL
-        if payload.task_success
-        else FeedbackVerdict.UNHELPFUL
-    )
-    fb = MemoryFeedback(
-        id="",  # store will assign
-        memory_id=payload.lesson_id,
-        verdict=verdict,
-        comment=f"task_success={payload.task_success}",
-        execution_id=None,
-        applied=True,
-    )
-
+    verdict = FeedbackVerdict.USEFUL if payload.task_success else FeedbackVerdict.UNHELPFUL
     rt.store.add_feedback(payload.lesson_id, verdict)
     if payload.project_id:
         rt.store.record_use(

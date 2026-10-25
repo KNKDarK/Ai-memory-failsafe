@@ -9,20 +9,22 @@ from __future__ import annotations
 
 # Legacy request schemas (preserved for backward compatibility)
 from backend.api.schemas._legacy import (
-    LLMEvaluationRequest,
     _MAX_ENV_KEY_LENGTH,
-    _check_env_structure,
-    _validate_agent_id,
-    _validate_task,
     CompareTasksRequest,
     CrossAgentRunRequest,
     EnvironmentSpec,
     EvaluationRunRequest,
     FeedbackRequest,
-    FeedbackRequest as LegacyFeedbackRequest,  # noqa: F401
+    LLMEvaluationRequest,
     RetrievalPreviewRequest,
     RunTaskRequest,
     StatusRequest,
+    _check_env_structure,
+    _validate_agent_id,
+    _validate_task,
+)
+from backend.api.schemas._legacy import (
+    FeedbackRequest as LegacyFeedbackRequest,  # noqa: F401
 )
 
 # Replay Lab schemas
@@ -37,6 +39,8 @@ from backend.api.schemas.lab import (
 # Developer SDK schemas
 from backend.api.schemas.sdk import (
     FeedbackRequest as SdkFeedbackRequest,  # noqa: F401
+)
+from backend.api.schemas.sdk import (
     LessonDTO,
     QueryLessonsRequest,
     QueryLessonsResponse,
