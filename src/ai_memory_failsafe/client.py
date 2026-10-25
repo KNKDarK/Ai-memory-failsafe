@@ -7,10 +7,14 @@ submit outcome feedback without constructing raw HTTP requests themselves.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
-import httpx
+# The project pins the ``httpx2`` fork (see requirements.txt) to avoid Starlette's
+# deprecation warning about plain ``httpx`` from its TestClient; the fork is
+# API-compatible, so alias it under the same name here.
+import httpx2 as httpx
 
 logger = logging.getLogger("ai_memory_failsafe.client")
 
@@ -252,7 +256,7 @@ class FailsafeClient:
         # Success — parse JSON.
         try:
             return response.json()
-        except httpx.InvalidJSONError as exc:
+        except json.JSONDecodeError as exc:
             logger.warning("Failed to parse JSON from %s: %s", url, exc)
             raise FailsafeError(
                 f"Backend returned non-JSON response (status {response.status_code})",
@@ -272,7 +276,7 @@ class FailsafeClient:
         """Close the underlying HTTP client connection pool."""
         self._client.close()
 
-    def __enter__(self) -> "FailsafeClient":
+    def __enter__(self) -> FailsafeClient:
         return self
 
     def __exit__(self, *args: Any) -> None:

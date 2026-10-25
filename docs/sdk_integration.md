@@ -150,10 +150,7 @@ from ai_memory_failsafe.client import FailsafeClient
 client = FailsafeClient(base_url="http://localhost:8000")
 
 # With API token (production / protected deployments)
-client = FailsafeClient(
-    base_url="http://your-server:8000",
-    api_key="my-secret-token"
-)
+client = FailsafeClient(base_url="http://your-server:8000", api_key="my-secret-token")
 
 # As a context manager
 with FailsafeClient(base_url="http://localhost:8000") as client:
@@ -236,13 +233,13 @@ client.record_failure(
     task_input="Deploy billing service",
     action_trace=[...],
     error_message="DATABASE_URL not set",
-    project_id="payments",      # Scoped to payments project
+    project_id="payments",  # Scoped to payments project
 )
 
 # Query lessons — only lessons from the same project are returned
 lessons = client.get_prevention_lessons(
     task_description="Deploy the billing service",
-    project_id="payments",       # Same scope
+    project_id="payments",  # Same scope
     agent_id="agent-42",
 )
 ```
@@ -297,6 +294,7 @@ lessons = client.get_prevention_lessons(
 ```python
 from ai_memory_failsafe.client import FailsafeClient, ConnectionError, FailsafeError
 
+
 def run_task_with_failure_memory(task: str, project_id: str = "default_project") -> dict:
     """Execute a task with failure-memory lesson retrieval built in."""
     client = FailsafeClient(base_url="http://localhost:8000", api_key=None)
@@ -323,7 +321,7 @@ def run_task_with_failure_memory(task: str, project_id: str = "default_project")
         try:
             client.report_outcome(
                 lesson_id=lesson["lesson_id"],
-                task_success=True,   # or False if it failed anyway
+                task_success=True,  # or False if it failed anyway
                 project_id=project_id,
                 agent_id="my-agent",
             )
