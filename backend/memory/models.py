@@ -84,6 +84,7 @@ class FailureMemory(BaseModel):
     lesson: str
     prevention: str
     prevention_actions: list[str] = Field(default_factory=list)
+    prevention_steps: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 
     # --- Trust -----------------------------------------------------------
