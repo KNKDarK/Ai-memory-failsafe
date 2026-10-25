@@ -40,9 +40,7 @@ def simulate_execution(task_description: str) -> dict:
     always_fail = True  # Set to False to simulate success
 
     if always_fail:
-        raise RuntimeError(
-            "API key expired while calling billing_api — request returned HTTP 401"
-        )
+        raise RuntimeError("API key expired while calling billing_api — request returned HTTP 401")
     return {"status": "ok", "data": {"balance": 1250.0}}
 
 
@@ -56,13 +54,13 @@ def main() -> None:
     try:
         with FailsafeClient(base_url=base_url, api_key=None) as client:
             _run_lifecycle(client)
-    except ConnectionError as exc:
+    except ConnectionError:
         # Backend is not running — print a helpful message and exit cleanly.
         logger.warning("Backend unreachable at %s", base_url)
         logger.info(
             "Start the backend with:\n"
             "  cd Ai-memory-failsafe && uvicorn backend.api.routes:app --reload\n"
-            f"\nConnection error (expected when no backend is running):\n"
+            "\nConnection error (expected when no backend is running):\n"
             "  {exc}"
         )
         # Still demonstrate the local flow so the code path is covered.
@@ -107,7 +105,11 @@ def _run_lifecycle(client: FailsafeClient) -> None:
     logger.info("Step 2 — Executing task …")
 
     action_trace = [
-        {"tool": "call_api", "args": {"service": "billing_api", "method": "GET", "path": "/balances"}, "output": None},
+        {
+            "tool": "call_api",
+            "args": {"service": "billing_api", "method": "GET", "path": "/balances"},
+            "output": None,
+        },
     ]
 
     try:

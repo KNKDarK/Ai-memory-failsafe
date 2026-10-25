@@ -19,6 +19,7 @@ router = APIRouter(prefix="/lab", tags=["Replay Lab"])
 # Replay execution
 # --------------------------------------------------------------------------- #
 
+
 @router.post("/replay")
 async def run_replay(request: Request) -> dict:
     """Run a baseline vs treatment replay comparison.

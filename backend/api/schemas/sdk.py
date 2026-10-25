@@ -137,9 +137,7 @@ class RecordFailureRequest(BaseModel):
     )
     action_trace: list[dict[str, Any]] = Field(
         default_factory=list,
-        description=(
-            "Ordered sequence of tool calls and their results leading up to the failure."
-        ),
+        description=("Ordered sequence of tool calls and their results leading up to the failure."),
     )
     error_message: str = Field(
         ...,

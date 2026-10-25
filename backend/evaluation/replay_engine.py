@@ -15,18 +15,23 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any
 
-from backend.api.schemas.lab import (
-    ExecutionTrace as LabExecutionTrace,
-    MemoryAttribution as LabMemoryAttribution,
-    ReplayRunRequest,
-    ReplayRunResponse,
-    StepTrace as LabStepTrace,
-)
 from backend.agent.environment import SimulatedEnvironment
 from backend.agent.orchestrator import AgentOrchestrator, ExecutionTrace
+from backend.api.schemas.lab import (
+    ExecutionTrace as LabExecutionTrace,
+)
+from backend.api.schemas.lab import (
+    MemoryAttribution as LabMemoryAttribution,
+)
+from backend.api.schemas.lab import (
+    ReplayRunResponse,
+)
+from backend.api.schemas.lab import (
+    StepTrace as LabStepTrace,
+)
 
 logger = logging.getLogger("failure_memory.replay")
 
@@ -172,9 +177,7 @@ class MemoryReplayLab:
         )
 
     @staticmethod
-    def _compute_delta(
-        baseline: ExecutionTrace, treatment: ExecutionTrace
-    ) -> MetricDelta:
+    def _compute_delta(baseline: ExecutionTrace, treatment: ExecutionTrace) -> MetricDelta:
         """Compute real metric deltas between two execution arms."""
         success_improved = (not baseline.success) and treatment.success
         attempts_saved = max(0, baseline.total_attempts - treatment.total_attempts)
@@ -237,6 +240,7 @@ class MemoryReplayLab:
 # --------------------------------------------------------------------------- #
 # Convenience: replay_task (one-liner)
 # --------------------------------------------------------------------------- #
+
 
 def replay_task(
     scenario_id: str,

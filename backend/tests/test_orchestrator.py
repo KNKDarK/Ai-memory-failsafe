@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from backend.agent.environment import SimulatedEnvironment, default_environment
-from backend.agent.models import PlanStep
 from backend.agent.orchestrator import (
     AgentOrchestrator,
     ExecutionTrace,
@@ -14,13 +13,12 @@ from backend.agent.orchestrator import (
     run_task_with_trace,
 )
 from backend.config import Settings
-from backend.domain import OutcomeType
 from backend.evaluation.replay_engine import MemoryReplayLab, MetricDelta, replay_task
-
 
 # --------------------------------------------------------------------------- #
 # AgentOrchestrator — basic execution
 # --------------------------------------------------------------------------- #
+
 
 class TestAgentOrchestrator:
     """Instrumented wrapper around ``FailureMemoryAgent``."""
@@ -105,6 +103,7 @@ class TestAgentOrchestrator:
 # MemoryAttributionRecorder — rejection reasons
 # --------------------------------------------------------------------------- #
 
+
 class TestMemoryAttributionRecorder:
     """Captures how retrieved lessons were used."""
 
@@ -136,6 +135,7 @@ class TestMemoryAttributionRecorder:
 # ExecutionTrace — frozen dataclass
 # --------------------------------------------------------------------------- #
 
+
 class TestExecutionTrace:
     def test_frozen_dataclass(self) -> None:
         trace = ExecutionTrace(execution_mode="simulated")
@@ -146,6 +146,7 @@ class TestExecutionTrace:
 # --------------------------------------------------------------------------- #
 # MetricDelta — computed differences
 # --------------------------------------------------------------------------- #
+
 
 class TestMetricDelta:
     def test_to_dict(self) -> None:
@@ -171,6 +172,7 @@ class TestMetricDelta:
 # --------------------------------------------------------------------------- #
 # MemoryReplayLab — side-by-side comparison
 # --------------------------------------------------------------------------- #
+
 
 class TestMemoryReplayLab:
     def test_run_replay_produces_response(self) -> None:
@@ -235,6 +237,7 @@ class TestMemoryReplayLab:
 # --------------------------------------------------------------------------- #
 # Integration — orchestrator + replay together
 # --------------------------------------------------------------------------- #
+
 
 class TestOrchestratorIntegration:
     def test_shared_orchestrator_across_replay(self) -> None:
