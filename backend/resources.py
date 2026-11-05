@@ -25,6 +25,15 @@ def _read_int(path: str) -> int | None:
 
 
 def _memory_bytes() -> tuple[int | None, int | None]:
+    # Try psutil first (cross-platform, preferred).
+    try:
+        import psutil  # type: ignore[import]
+        vm = psutil.virtual_memory()
+        return vm.total, vm.available
+    except ImportError:
+        pass
+
+    # Linux: read /proc/meminfo.
     total = available = None
     try:
         values = {}
@@ -37,11 +46,26 @@ def _memory_bytes() -> tuple[int | None, int | None]:
     except (OSError, ValueError):
         pass
 
+    # Container cgroup override.
     limit = _read_int("/sys/fs/cgroup/memory.max")
     usage = _read_int("/sys/fs/cgroup/memory.current")
     if limit is not None and (total is None or limit < total):
         total = limit
         available = max(0, limit - usage) if usage is not None else available
+
+    # Windows fallback via WMI.
+    if total is None:
+        try:
+            import win32com.client  # type: ignore[import]
+            wmi = win32com.client.GetObject("winmgmts:")
+            os_obj = wmi.ExecQuery(
+                "SELECT TotalVisibleMemorySize, FreePhysicalMemory FROM Win32_OperatingSystem"
+            )[0]
+            total = int(os_obj.TotalVisibleMemorySize) * 1024
+            available = int(os_obj.FreePhysicalMemory) * 1024
+        except Exception:
+            pass
+
     return total, available
 
 
@@ -111,9 +135,10 @@ def _gpu_info() -> tuple[bool, str | None, int | None, int | None]:
 
 def detect_resources() -> ResourceSnapshot:
     cpu_count = _cpu_count()
+    # Load average is not available on Windows.
     try:
         load = os.getloadavg()[0]
-    except OSError:
+    except (OSError, AttributeError):
         load = None
     memory_total, memory_available = _memory_bytes()
     gpu_available, gpu_name, gpu_total, gpu_free = _gpu_info()
